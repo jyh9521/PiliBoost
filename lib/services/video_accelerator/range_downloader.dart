@@ -77,6 +77,7 @@ class RangeDownloader {
   RangeDownloader({
     required this.headers,
     required this.clientFactory,
+    this.onBytesReceived,
     this.maxChunkBytes = 256 * 1024,
     this.maxAttempts = 2,
     this.timeout = const Duration(seconds: 8),
@@ -92,6 +93,7 @@ class RangeDownloader {
       throw ArgumentError('Invalid download budget');
     }
   }
+  final void Function(int)? onBytesReceived;
   final Map<String, String> headers;
   final HttpClient Function() clientFactory;
   final int maxChunkBytes, maxAttempts;
@@ -188,6 +190,7 @@ class RangeDownloader {
       await for (final chunk in response) {
         token.check();
         upstreamBytes += chunk.length;
+        onBytesReceived?.call(chunk.length);
         firstByte ??= watch.elapsed;
         if (received + chunk.length > bytes.length) {
           throw const RangeTransferException('oversizedBody');

@@ -8,6 +8,7 @@ import 'package:PiliPlus/services/video_accelerator/range_scheduler.dart';
 import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
 import 'package:PiliPlus/services/video_accelerator/range_cdn_pool.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
+import 'package:PiliPlus/services/video_accelerator/transfer_metrics.dart';
 
 /// Video-only loopback relay; optional validated, bounded parallel windows.
 /// Player demand drives streaming; every new request cancels the previous one.
@@ -21,9 +22,11 @@ class LocalStreamServer {
     this.rangeConcurrency = 1,
     int? initialConcurrency,
     RangeMemoryCache? cache,
+    TransferMetrics? metrics,
     this.candidates = const [],
     this.config = const AcceleratorConfig(),
-  }) : cache = cache ?? RangeMemoryCache(),
+  }) : metrics = metrics ?? TransferMetrics(),
+       cache = cache ?? RangeMemoryCache(),
        desiredConcurrency = initialConcurrency ?? rangeConcurrency,
        assert(
          (initialConcurrency ?? rangeConcurrency) >= 1 &&
@@ -40,6 +43,9 @@ class LocalStreamServer {
   RangeCancellation? _poolToken;
   int _poolCreatedMs = 0;
   List<Map<String, Object?>> get poolStats => _pool?.diagnostics ?? [];
+  final TransferMetrics metrics;
+  int observedConcurrency = 0;
+  double get networkThroughputBps => metrics.freshForwardedBps;
   final RangeMemoryCache cache;
   final int rangeConcurrency;
   int desiredConcurrency;
@@ -51,11 +57,14 @@ class LocalStreamServer {
   int get reservedBytes => _scheduler?.reservedBytes ?? 0;
   int actualConcurrency = 1;
   String parallelStatus = 'singleConnection';
+  String validatorStatus = 'unmeasured';
+  int get rejectedPoolCandidates => _pool?.rejectedCandidates ?? 0;
+  Map<String, int> get poolRejectionReasons =>
+      _pool?.rejectionReasons ?? const {};
   final void Function()? onFailure;
   HttpServer? _server;
   HttpClient? _client;
   final _clock = Stopwatch()..start();
-  final _buckets = <int, int>{};
   final _token = List.generate(
     24,
     (_) => Random.secure().nextInt(256),
@@ -67,14 +76,7 @@ class LocalStreamServer {
   Future<void>? _closing;
   Uri get uri => Uri.parse('http://127.0.0.1:${_server!.port}/$_token/video');
 
-  double get throughputBps {
-    final second = _clock.elapsed.inSeconds;
-    _buckets.removeWhere((key, _) => key < second - 2);
-    final micros = min(_clock.elapsedMicroseconds, 3000000);
-    return micros == 0
-        ? 0
-        : _buckets.values.fold<int>(0, (a, b) => a + b) * 8e6 / micros;
-  }
+  double get throughputBps => metrics.outputBps;
 
   Future<void> start() async {
     if (_closed) throw StateError('Closed relay');
@@ -181,6 +183,13 @@ class LocalStreamServer {
       r.response.headers.set('cache-control', 'no-store');
       if (rangeConcurrency > 1 && r.method == 'GET') {
         final etag = response.headers.value('etag');
+        validatorStatus = etag == null
+            ? 'missing'
+            : etag.startsWith('W/')
+            ? 'weak'
+            : RegExp(r'^"[\x21\x23-\x7e]*"$').hasMatch(etag)
+            ? 'strong'
+            : 'unsupported';
         // A strong validator is required before combining separate responses.
         if (etag != null && RegExp(r'^"[\x21\x23-\x7e]*"$').hasMatch(etag)) {
           final cr = status == 206
@@ -197,6 +206,7 @@ class LocalStreamServer {
             OrderedRangeScheduler? scheduler;
             RangeDownloader? downloader;
             var upstreamBefore = 0;
+            var chunkCached = false;
             try {
               await previous;
               if (_closed || epoch != _epoch) throw const RangeCancelled();
@@ -213,6 +223,7 @@ class LocalStreamServer {
                   _pool = RangePoolDownloader(
                     headers: headers,
                     clientFactory: clientFactory,
+                    onBytesReceived: metrics.received,
                     cache: cache,
                     primary: resource,
                     candidates: candidates,
@@ -241,11 +252,19 @@ class LocalStreamServer {
                   cache: cache,
                   headers: headers,
                   clientFactory: clientFactory,
+                  onBytesReceived: metrics.received,
                 );
               }
               scheduler = OrderedRangeScheduler(
                 downloader: downloader,
                 concurrency: rangeConcurrency,
+                onChunkReady: (chunk) {
+                  chunkCached = chunk.attempts == 0;
+                  observedConcurrency = max(
+                    observedConcurrency,
+                    downloader!.peakActiveRequests,
+                  );
+                },
                 windowConcurrency: () {
                   actualConcurrency = desiredConcurrency;
                   return desiredConcurrency;
@@ -277,7 +296,7 @@ class LocalStreamServer {
                       if (_closed || epoch != _epoch) {
                         throw const RangeCancelled();
                       }
-                      _recordForwarded(chunk.length);
+                      _recordForwarded(chunk.length, cached: chunkCached);
                       return chunk;
                     }),
               );
@@ -323,6 +342,8 @@ class LocalStreamServer {
                 }
                 received += chunk.length;
                 upstreamBytes += chunk.length;
+                metrics.received(chunk.length);
+                observedConcurrency = max(observedConcurrency, 1);
                 if (received > response.contentLength) {
                   upstreamFailed = true;
                   throw const FormatException('Oversized upstream');
@@ -378,11 +399,9 @@ class LocalStreamServer {
     }
   }
 
-  void _recordForwarded(int count) {
+  void _recordForwarded(int count, {bool cached = false}) {
     forwardedBytes += count;
-    final second = _clock.elapsed.inSeconds;
-    _buckets.removeWhere((key, _) => key < second - 2);
-    _buckets.update(second, (n) => n + count, ifAbsent: () => count);
+    metrics.forwarded(count, cached: cached);
   }
 
   void resetPool() {

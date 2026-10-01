@@ -19,6 +19,7 @@ class OrderedRangeScheduler {
     this.chunkBytes = 256 * 1024,
     this.maxMemoryBytes = 4 * 1024 * 1024,
     this.windowConcurrency,
+    this.onChunkReady,
   }) {
     if (concurrency < 1 ||
         concurrency > 16 ||
@@ -28,6 +29,7 @@ class OrderedRangeScheduler {
       throw ArgumentError('Invalid scheduler budget');
     }
   }
+  final void Function(RangeChunk)? onChunkReady;
   final int Function()? windowConcurrency;
   final RangeDownloader downloader;
   final int concurrency, chunkBytes, maxMemoryBytes;
@@ -101,6 +103,7 @@ class OrderedRangeScheduler {
           if (outcome.error != null) throw outcome.error!;
           pendingRanges--;
           deliveredBytes += outcome.chunk!.bytes.length;
+          onChunkReady?.call(outcome.chunk!);
           yield outcome.chunk!.bytes;
         }
         // Start no additional window while the consumer is paused at yield.

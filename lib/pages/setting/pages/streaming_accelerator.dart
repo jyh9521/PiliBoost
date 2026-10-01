@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_diagnostics.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:PiliPlus/services/video_accelerator/transfer_metrics.dart';
 
 class StreamingAcceleratorPage extends StatefulWidget {
   const StreamingAcceleratorPage({
@@ -91,6 +92,19 @@ class AcceleratorDiagnosticsPage extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           children: [
             Text('状态：${data['state']}'),
+            Text(AcceleratorEffectSummary.describe(data)),
+            Text(
+              '网络接收：${AcceleratorEffectSummary.rate(data['networkReceivedBps'])}（含探测/重试）',
+            ),
+            Text(
+              '网络顺序输出：${AcceleratorEffectSummary.rate(data['networkForwardedBps'])}',
+            ),
+            Text(
+              '缓存输出：${AcceleratorEffectSummary.rate(data['cacheForwardedBps'])}',
+            ),
+            Text(
+              '缓冲：${(data['bufferSeconds'] as num?)?.toStringAsFixed(1) ?? "未测量"} 秒；目标：${AcceleratorEffectSummary.rate(data['requiredBps'])}',
+            ),
             Text(switch (data['switchOutcome']) {
               'awaitingBufferRecovery' => '已切线，正在观察缓冲；尚未确认改善。',
               'stillLowBuffer' => '切线后仍低缓冲：本次加速尚未达到播放需求。',
@@ -100,7 +114,7 @@ class AcceleratorDiagnosticsPage extends StatelessWidget {
             const Text(
               '吞吐单位 bits/s；TTFB、cooldown 单位 ms；buffer 单位秒。\n'
               'V1 的 aggregateBps 为 mpv cache-speed 辅助值，不是逐轨精确吞吐。\n'
-              'Proxy 模式 aggregateBps 为最近约 3 秒视频转发速率，不含音频，也不是去重 goodput。\n'
+              '代理计量为最近约 3 秒视频载荷速率，不含音频/协议开销；输出区分网络与缓存。Auto 只使用网络顺序输出，不使用缓存速度，仍不是跨 seek 去重 goodput。\n'
               'DNS/connect/RTT 未测量时显示 null；不输出签名 URL。',
             ),
             const SizedBox(height: 12),

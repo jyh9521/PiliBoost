@@ -384,7 +384,17 @@ class AcceleratorSession {
       'aggregateBps': aggregateBps,
       'throughputSource': proxy == null || bypassed
           ? 'mpvAuxiliary'
-          : 'proxyForwardedWindow',
+          : 'freshNetworkOrderedVideoWindow',
+      'networkReceivedBps': proxy?.metrics.upstreamBps,
+      'networkForwardedBps': proxy?.metrics.freshForwardedBps,
+      'cacheForwardedBps': proxy?.metrics.cachedForwardedBps,
+      'networkReceivedBytes': proxy?.metrics.upstreamBytes ?? 0,
+      'networkForwardedBytes': proxy?.metrics.freshForwardedBytes ?? 0,
+      'cacheForwardedBytes': proxy?.metrics.cachedForwardedBytes ?? 0,
+      'observedConcurrency': proxy?.observedConcurrency ?? 0,
+      'autoDecisionThroughputSource': config.usesProxy
+          ? 'freshNetworkOrderedVideoWindow'
+          : 'mpvAuxiliary',
       'proxyThroughputBps': proxy?.throughputBps,
       'proxyUpstreamBytes': proxy?.upstreamBytes ?? 0,
       'proxyForwardedBytes': proxy?.forwardedBytes ?? 0,
@@ -395,6 +405,9 @@ class AcceleratorSession {
       'concurrency': proxy?.actualConcurrency ?? 1,
       'requestedConcurrency': config.parallelism,
       'parallelStatus': proxy?.parallelStatus,
+      'validatorStatus': proxy?.validatorStatus,
+      'poolRejectedCandidates': proxy?.rejectedPoolCandidates ?? 0,
+      'poolRejectionReasons': proxy?.poolRejectionReasons ?? const {},
       'pool': proxy?.poolStats ?? [],
       'refreshRequired': proxy?.lastFailureReason == 'http403',
       'switches': switches,

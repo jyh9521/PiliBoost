@@ -170,3 +170,5 @@ test*
 /tool/phase0/capture_evidence.py
 
 /docs/accelerator/integration-local/
+
+/docs/accelerator/diagnostics-local/

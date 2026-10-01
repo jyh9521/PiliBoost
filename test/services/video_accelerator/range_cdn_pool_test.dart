@@ -92,6 +92,7 @@ void main() {
     await pool.prepare(RangeCancellation());
     expect(pool.lanes.length, 1);
     expect(pool.rejectedCandidates, 1);
+    expect(pool.rejectionReasons, {'anchorMismatch': 1});
   });
   test(
     'transient failed chunk moves to healthy lane and failed lane cools down',

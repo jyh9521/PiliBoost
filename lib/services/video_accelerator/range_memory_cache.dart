@@ -61,6 +61,7 @@ class CachedRangeDownloader extends RangeDownloader {
     required super.headers,
     required super.clientFactory,
     required this.cache,
+    super.onBytesReceived,
   });
   final RangeMemoryCache cache;
   @override

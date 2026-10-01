@@ -43,6 +43,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
     required super.headers,
     required super.clientFactory,
     required super.cache,
+    super.onBytesReceived,
     required this.primary,
     required this.candidates,
     this.sampleBytes = 64 * 1024,
@@ -57,6 +58,12 @@ class RangePoolDownloader extends CachedRangeDownloader {
   final lanes = <RangePoolLane>[];
   final _clock = Stopwatch()..start();
   int rejectedCandidates = 0, failovers = 0;
+  final rejectionReasons = <String, int>{};
+  void _reject(String reason) {
+    rejectedCandidates++;
+    rejectionReasons.update(reason, (n) => n + 1, ifAbsent: () => 1);
+  }
+
   List<Map<String, Object?>> get diagnostics => lanes
       .map(
         (l) => {
@@ -88,6 +95,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
     RangeDownloader(
       headers: headers,
       clientFactory: clientFactory,
+      onBytesReceived: onBytesReceived,
       maxAttempts: 1,
       timeout: probeTimeout,
     ),
@@ -140,7 +148,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
             token,
           );
           if (!_equal(head.bytes, h.bytes) || !_equal(tail.bytes, t.bytes)) {
-            rejectedCandidates++;
+            _reject('anchorMismatch');
             continue;
           }
           next
@@ -149,8 +157,10 @@ class RangePoolDownloader extends CachedRangeDownloader {
           lanes.add(next);
         } on RangeCancelled {
           rethrow;
+        } on RangeTransferException catch (error) {
+          _reject(error.reason);
         } catch (_) {
-          rejectedCandidates++;
+          _reject('candidateValidationError');
         } finally {
           if (!lanes.contains(next)) {
             _rejectedProbeBytes += next.downloader.upstreamBytes;

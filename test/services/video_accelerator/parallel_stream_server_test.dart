@@ -117,9 +117,29 @@ void main() {
       expect(chunkHits, 0);
       expect(relay.actualConcurrency, 1);
       expect(relay.parallelStatus, 'missingStrongValidator');
+      expect(relay.validatorStatus, absent == 'weak' ? 'weak' : 'missing');
       expect(failed, 0);
     });
   }
+  test(
+    'cache replay adds output but no received or fresh network payload',
+    () async {
+      final first = await read(range: 'bytes=0-1048575');
+      expect(first.$2, data.sublist(0, 1048576));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(relay.metrics.upstreamBytes, 1048576);
+      expect(relay.metrics.freshForwardedBytes, 1048576);
+      expect(relay.metrics.cachedForwardedBytes, 0);
+      expect(relay.observedConcurrency, 4);
+      final second = await read(range: 'bytes=0-1048575');
+      expect(second.$2, first.$2);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(relay.metrics.upstreamBytes, 1048576);
+      expect(relay.metrics.freshForwardedBytes, 1048576);
+      expect(relay.metrics.cachedForwardedBytes, 1048576);
+      expect(relay.forwardedBytes, 2097152);
+    },
+  );
   test('HEAD and 416 do not start chunk workers', () async {
     expect((await read(method: 'HEAD')).$2, isEmpty);
     expect((await read(range: 'bytes=${data.length}-')).$1, 416);

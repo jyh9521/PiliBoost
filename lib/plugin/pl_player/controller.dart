@@ -747,7 +747,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
                   1e6,
               // Audio stays direct; the video relay metric is reported separately.
               throughputBps: accelerator.proxy != null && !accelerator.bypassed
-                  ? accelerator.proxy!.throughputBps
+                  ? accelerator.proxy!.networkThroughputBps
                   : bytesPerSecond * 8,
               playing:
                   native.getProperty('pause') == 'no' &&
