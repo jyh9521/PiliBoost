@@ -168,3 +168,5 @@ test*
 /docs/accelerator/publish-local/
 /docs/accelerator/range-core-local/
 /tool/phase0/capture_evidence.py
+
+/docs/accelerator/integration-local/

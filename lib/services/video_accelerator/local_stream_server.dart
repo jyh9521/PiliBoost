@@ -3,8 +3,11 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:PiliPlus/services/video_accelerator/range_protocol.dart';
+import 'package:PiliPlus/services/video_accelerator/range_downloader.dart';
+import 'package:PiliPlus/services/video_accelerator/range_scheduler.dart';
+import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
 
-/// Single-upstream, video-only loopback relay. No prefetch, cache or retry.
+/// Video-only loopback relay; optional validated, bounded parallel windows.
 /// Player demand drives streaming; every new request cancels the previous one.
 class LocalStreamServer {
   LocalStreamServer({
@@ -13,11 +16,29 @@ class LocalStreamServer {
     required this.clientFactory,
     this.timeout = const Duration(seconds: 15),
     this.onFailure,
-  });
+    this.rangeConcurrency = 1,
+    int? initialConcurrency,
+    RangeMemoryCache? cache,
+  }) : cache = cache ?? RangeMemoryCache(),
+       desiredConcurrency = initialConcurrency ?? rangeConcurrency,
+       assert(
+         (initialConcurrency ?? rangeConcurrency) >= 1 &&
+             (initialConcurrency ?? rangeConcurrency) <= rangeConcurrency,
+       ),
+       assert(rangeConcurrency >= 1 && rangeConcurrency <= 16);
   final Uri Function() source;
   final Map<String, String> headers;
   final HttpClient Function() clientFactory;
   final Duration timeout;
+  final RangeMemoryCache cache;
+  final int rangeConcurrency;
+  int desiredConcurrency;
+  OrderedRangeScheduler? _scheduler;
+  Future<void> _parallelDrain = Future<void>.value();
+  int get activeRanges => _scheduler?.downloader.activeRequests ?? 0;
+  int get reservedBytes => _scheduler?.reservedBytes ?? 0;
+  int actualConcurrency = 1;
+  String parallelStatus = 'singleConnection';
   final void Function()? onFailure;
   HttpServer? _server;
   HttpClient? _client;
@@ -145,6 +166,87 @@ class LocalStreamServer {
         if (value != null) r.response.headers.set(name, value);
       }
       r.response.headers.set('cache-control', 'no-store');
+      if (rangeConcurrency > 1 && r.method == 'GET') {
+        final etag = response.headers.value('etag');
+        // A strong validator is required before combining separate responses.
+        if (etag != null && RegExp(r'^"[\x21\x23-\x7e]*"$').hasMatch(etag)) {
+          final cr = status == 206
+              ? ContentRange.parse(response.headers.value('content-range')!)
+              : null;
+          final total = cr?.total ?? response.contentLength;
+          if (total > 0) {
+            final first = cr?.start ?? 0;
+            final last = cr?.end ?? total - 1;
+            client.close(force: true);
+            final previous = _parallelDrain;
+            final completion = Completer<void>();
+            _parallelDrain = completion.future;
+            OrderedRangeScheduler? scheduler;
+            try {
+              await previous;
+              if (_closed || epoch != _epoch) throw const RangeCancelled();
+              scheduler = OrderedRangeScheduler(
+                downloader: CachedRangeDownloader(
+                  cache: cache,
+                  headers: headers,
+                  clientFactory: clientFactory,
+                ),
+                concurrency: rangeConcurrency,
+                windowConcurrency: () {
+                  actualConcurrency = desiredConcurrency;
+                  return desiredConcurrency;
+                },
+              );
+              _scheduler = scheduler;
+              actualConcurrency = desiredConcurrency;
+              parallelStatus = 'strongEtagParallel';
+              final resource = RangeResource(
+                uri: remote,
+                totalBytes: total,
+                etag: etag,
+              );
+              unawaited(
+                r.response.done.then<void>(
+                  (_) => scheduler?.invalidate(),
+                  onError: (Object _) {
+                    consumerGone = true;
+                    scheduler?.invalidate();
+                  },
+                ),
+              );
+              committed = true;
+              await r.response.addStream(
+                scheduler
+                    .read(resource, first, last)
+                    .handleError((Object error) {
+                      if (error is! RangeCancelled) upstreamFailed = true;
+                      throw error;
+                    })
+                    .map((chunk) {
+                      if (_closed || epoch != _epoch) {
+                        throw const RangeCancelled();
+                      }
+                      _recordForwarded(chunk.length);
+                      return chunk;
+                    }),
+              );
+              if (scheduler.deliveredBytes != last - first + 1) {
+                cancellations++;
+              }
+              await r.response.close();
+              return;
+            } finally {
+              scheduler?.invalidate();
+              // addStream cancels its subscription and waits for async* finally.
+              upstreamBytes += scheduler?.downloader.upstreamBytes ?? 0;
+              if (identical(_scheduler, scheduler)) _scheduler = null;
+              completion.complete();
+            }
+          }
+        }
+        actualConcurrency = 1;
+        parallelStatus = 'missingStrongValidator';
+      }
       committed = true;
       if (r.method != 'HEAD') {
         var received = 0;
@@ -174,14 +276,7 @@ class LocalStreamServer {
                   throw const FormatException('Oversized upstream');
                 }
                 // Bytes handed to the downstream stream, not unique cached goodput.
-                forwardedBytes += chunk.length;
-                final second = _clock.elapsed.inSeconds;
-                _buckets.removeWhere((key, _) => key < second - 2);
-                _buckets.update(
-                  second,
-                  (n) => n + chunk.length,
-                  ifAbsent: () => chunk.length,
-                );
+                _recordForwarded(chunk.length);
                 return chunk;
               }),
         );
@@ -229,7 +324,15 @@ class LocalStreamServer {
     }
   }
 
+  void _recordForwarded(int count) {
+    forwardedBytes += count;
+    final second = _clock.elapsed.inSeconds;
+    _buckets.removeWhere((key, _) => key < second - 2);
+    _buckets.update(second, (n) => n + count, ifAbsent: () => count);
+  }
+
   void cancelRequests() {
+    _scheduler?.invalidate();
     _epoch++;
     if (_client != null) cancellations++;
     _client?.close(force: true);
@@ -243,5 +346,7 @@ class LocalStreamServer {
     _closed = true;
     cancelRequests();
     await _server?.close(force: true);
+    await _parallelDrain;
+    cache.clear();
   }
 }

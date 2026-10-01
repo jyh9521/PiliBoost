@@ -18,6 +18,7 @@ class OrderedRangeScheduler {
     this.concurrency = 4,
     this.chunkBytes = 256 * 1024,
     this.maxMemoryBytes = 4 * 1024 * 1024,
+    this.windowConcurrency,
   }) {
     if (concurrency < 1 ||
         concurrency > 16 ||
@@ -27,6 +28,7 @@ class OrderedRangeScheduler {
       throw ArgumentError('Invalid scheduler budget');
     }
   }
+  final int Function()? windowConcurrency;
   final RangeDownloader downloader;
   final int concurrency, chunkBytes, maxMemoryBytes;
   RangeCancellation? _token;
@@ -69,7 +71,11 @@ class OrderedRangeScheduler {
         token.check();
         reservedBytes = 0;
         pending = [];
-        for (var i = 0; i < concurrency && cursor <= end; i++) {
+        final width = (windowConcurrency?.call() ?? concurrency).clamp(
+          1,
+          concurrency,
+        );
+        for (var i = 0; i < width && cursor <= end; i++) {
           final last = min(cursor + chunkBytes - 1, end);
           reservedBytes += last - cursor + 1;
           // Handle every Future immediately, including out-of-order failures.

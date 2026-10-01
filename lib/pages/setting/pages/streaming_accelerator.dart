@@ -37,7 +37,7 @@ class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
     body: ListView(
       children: [
         const ListTile(
-          title: Text('PiliBoost Accelerator · V1c'),
+          title: Text('PiliBoost Accelerator · V2'),
           subtitle: Text('默认关闭。设置在下次加载视频/切换画质时生效；原 CDN 设置仍保留。'),
         ),
         for (final entry in const {
@@ -45,6 +45,11 @@ class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
           AcceleratorMode.auto: '自动 / Auto（V1：CDN 优选）',
           AcceleratorMode.smartCdn: 'CDN 优选 / Smart CDN',
           AcceleratorMode.rangeProxy: '本地 Range 代理 / Proxy（实验，单连接）',
+          AcceleratorMode.rangeAuto: '多线程 / Multi-Range · Auto（4–16）',
+          AcceleratorMode.multiRange4: '多线程 / Multi-Range · 4',
+          AcceleratorMode.multiRange8: '多线程 / Multi-Range · 8',
+          AcceleratorMode.multiRange12: '多线程 / Multi-Range · 12',
+          AcceleratorMode.multiRange16: '多线程 / Multi-Range · 16',
         }.entries)
           ListTile(
             title: Text(entry.value),
@@ -54,18 +59,13 @@ class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
           ),
         const ListTile(
           enabled: false,
-          title: Text('多线程 / Multi-Range'),
-          subtitle: Text('V2 尚未开放；并发 Auto / 4 / 8 / 12 / 16 届时可用'),
-        ),
-        const ListTile(
-          enabled: false,
           title: Text('多 CDN 多线程 / Multi-CDN'),
           subtitle: Text('V3 尚未开放'),
         ),
         const ListTile(
           title: Text('缓存与带宽'),
           subtitle: Text(
-            '不增加缓存或预读。Proxy 固定单条视频源，音频仍直连；支持 Range/seek 和实际转发计量，不测速切线，不启用多线程。Auto/CDN 优选仍每轮至多 2 次 256 KiB 探测，间隔至少 30 秒。',
+            '视频代理保持单 CDN，音频直连。多线程每片 256 KiB，重排最多 4 MiB；仅强 ETag 资源启用并发，无强校验时回落单连接。seek 取消旧代；RAM 缓存最多 8 MiB，前后窗口各 4 MiB，不写磁盘缓存。Auto/CDN 优选仍每轮至多 2 次 256 KiB 探测，间隔至少 30 秒。',
           ),
         ),
         ListTile(

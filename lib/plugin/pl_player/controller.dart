@@ -1,3 +1,6 @@
+import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
+import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
+
 import 'dart:async' show StreamSubscription, Timer, unawaited;
 import 'dart:convert' show ascii, utf8;
 import 'dart:io' show Platform;
@@ -657,6 +660,16 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         await accelerator.startProxy(
           create: (source, failure) => LocalStreamServer(
             source: source,
+            cache: RangeMemoryCache(
+              maxBytes:
+                  accelerator.config.maxMemoryBytes -
+                  accelerator.config.maxAheadBytes,
+              maxAheadBytes: accelerator.config.maxAheadBytes,
+              maxBehindBytes: accelerator.config.maxBehindBytes,
+            ),
+            rangeConcurrency: accelerator.config.parallelism,
+            initialConcurrency:
+                accelerator.config.mode == AcceleratorMode.rangeAuto ? 4 : null,
             headers: {
               'user-agent': BrowserUa.pc,
               'referer': HttpString.baseUrl,

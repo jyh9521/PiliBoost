@@ -26,12 +26,16 @@ void main() {
     await tester.tap(find.text('本地 Range 代理 / Proxy（实验，单连接）'));
     await tester.pumpAndSettle();
     expect(selected, AcceleratorMode.rangeProxy);
+    await tester.ensureVisible(find.text('多线程 / Multi-Range · 4'));
+    await tester.tap(find.text('多线程 / Multi-Range · 4'));
+    await tester.pumpAndSettle();
+    expect(selected, AcceleratorMode.multiRange4);
     final futureModes = tester
         .widgetList<ListTile>(find.byType(ListTile))
         .where(
           (tile) =>
               tile.title is Text &&
-              (tile.title as Text).data!.contains('Multi-'),
+              (tile.title as Text).data!.contains('Multi-CDN'),
         );
     expect(
       futureModes.every((tile) => !tile.enabled && tile.onTap == null),

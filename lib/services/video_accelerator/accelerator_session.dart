@@ -5,6 +5,7 @@ import 'package:PiliPlus/services/video_accelerator/accelerator_diagnostics.dart
 import 'package:PiliPlus/services/video_accelerator/cdn_probe.dart';
 import 'package:PiliPlus/services/video_accelerator/cdn_stats.dart';
 import 'package:PiliPlus/services/video_accelerator/local_stream_server.dart';
+import 'package:PiliPlus/services/video_accelerator/range_concurrency_policy.dart';
 
 class AcceleratorTrack {
   AcceleratorTrack({
@@ -50,11 +51,12 @@ class AcceleratorSession {
   String? probingTrack;
   String switchOutcome = 'notSwitched';
   LocalStreamServer? proxy;
+  final _rangePolicy = RangeConcurrencyPolicy();
 
   Future<void> startProxy({
     required LocalStreamServer Function(Uri Function(), void Function()) create,
   }) async {
-    if (config.mode != AcceleratorMode.rangeProxy || !enabled) return;
+    if (!config.usesProxy || !enabled) return;
     final video = tracks.firstWhere((track) => track.kind == 'video');
     final server = create(() => video.active, () {
       if (enabled) unawaited(restoreOriginal());
@@ -90,6 +92,7 @@ class AcceleratorSession {
     _lowSince = null;
     _quietUntil = now() + config.minimumLowDuration;
     if (networkChanged) {
+      proxy?.cache.clear();
       _lastProbe = null;
       for (final track in tracks) {
         track.stats.clear();
@@ -117,7 +120,17 @@ class AcceleratorSession {
     final target = requiredBps * speed;
     // Foundation stage: fixed single upstream, no probe traffic or deferred
     // host changes on an open-ended native request. Smart CDN remains separate.
-    if (config.mode == AcceleratorMode.rangeProxy) {
+    if (config.usesProxy) {
+      if (config.mode == AcceleratorMode.rangeAuto) {
+        _rangePolicy.observe(
+          now: time,
+          bufferSeconds: bufferSeconds,
+          throughputBps: aggregateBps,
+          requiredBps: target,
+          playing: playing,
+        );
+        proxy?.desiredConcurrency = _rangePolicy.concurrency;
+      }
       state = !playing || bufferSeconds > config.lowBufferSeconds
           ? 'normal'
           : 'lowBuffer';
@@ -359,16 +372,20 @@ class AcceleratorSession {
       'proxyErrors': proxy?.errors ?? 0,
       'proxyFailureReason': proxy?.lastFailureReason,
       'proxyActiveRequests': proxy?.activeRequests ?? 0,
-      'concurrency': 1,
+      'concurrency': proxy?.actualConcurrency ?? 1,
+      'requestedConcurrency': config.parallelism,
+      'parallelStatus': proxy?.parallelStatus,
       'switches': switches,
       'generation': generation,
       'probeBusy': _busy,
       'probingTrack': probingTrack,
       'decisionReason': decisionReason,
       'switchOutcome': switchOutcome,
-      'activeRanges': 0,
+      'activeRanges': proxy?.activeRanges ?? 0,
       'queuedRanges': 0,
-      'cacheBytes': 0,
+      'cacheBytes': proxy?.cache.bytes ?? 0,
+      'cacheHits': proxy?.cache.hits ?? 0,
+      'reorderBytes': proxy?.reservedBytes ?? 0,
       'tracks': tracks
           .map(
             (track) => {

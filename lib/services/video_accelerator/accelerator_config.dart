@@ -1,6 +1,16 @@
-enum AcceleratorMode { off, auto, smartCdn, rangeProxy }
+enum AcceleratorMode {
+  off,
+  auto,
+  smartCdn,
+  rangeProxy,
+  multiRange4,
+  multiRange8,
+  multiRange12,
+  multiRange16,
+  rangeAuto,
+}
 
-/// Smart CDN plus an opt-in single-upstream relay; no parallel downloader.
+/// Playback policy and bounded session RAM budgets; opt-in parallel modes.
 class AcceleratorConfig {
   const AcceleratorConfig({
     this.mode = AcceleratorMode.off,
@@ -19,6 +29,9 @@ class AcceleratorConfig {
     this.maxProbesPerRound = 2,
     this.minimumSampleBytes = 16 * 1024,
     this.maxSwitches = 4,
+    this.maxMemoryBytes = 12 * 1024 * 1024,
+    this.maxAheadBytes = 4 * 1024 * 1024,
+    this.maxBehindBytes = 4 * 1024 * 1024,
     this.ewmaFastHalfLifeSeconds = 2,
     this.ewmaSlowHalfLifeSeconds = 5,
   }) : assert(safetyFactor > 0),
@@ -26,6 +39,16 @@ class AcceleratorConfig {
        assert(probeBytes > 0),
        assert(maxProbesPerRound >= 2);
 
+  bool get usesProxy => mode == AcceleratorMode.rangeProxy || parallelism > 1;
+  int get parallelism => switch (mode) {
+    AcceleratorMode.multiRange4 => 4,
+    AcceleratorMode.multiRange8 => 8,
+    AcceleratorMode.multiRange12 => 12,
+    AcceleratorMode.multiRange16 => 16,
+    AcceleratorMode.rangeAuto => 16,
+    _ => 1,
+  };
+  final int maxMemoryBytes, maxAheadBytes, maxBehindBytes;
   final AcceleratorMode mode;
   final double safetyFactor, switchGain;
   final double lowBufferSeconds, recoveryBufferSeconds;
