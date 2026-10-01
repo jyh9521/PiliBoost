@@ -10,7 +10,7 @@ import 'package:PiliPlus/services/video_accelerator/local_stream_server.dart';
 void main() {
   final library = Platform.environment['PILIBOOST_LIBMPV'];
   final directory = Platform.environment['PILIBOOST_NATIVE_FIXTURE'];
-  for (final concurrency in [1, 4]) {
+  for (final concurrency in [1, 4, 16]) {
     test(
       'parallel=$concurrency locked media_kit native EDL video+audio seek and source rewrite',
       () async {
@@ -60,6 +60,9 @@ void main() {
         final base = 'http://127.0.0.1:${server.port}';
         final relay = LocalStreamServer(
           rangeConcurrency: concurrency,
+          candidates: concurrency == 16
+              ? [Uri.parse("$base/cdn-b/video.avi")]
+              : const [],
           source: () => Uri.parse('$base/cdn-a/video.avi'),
           headers: const {},
           clientFactory: HttpClient.new,

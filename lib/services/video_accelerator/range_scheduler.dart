@@ -37,7 +37,8 @@ class OrderedRangeScheduler {
   int generation = 0,
       reservedBytes = 0,
       peakReservedBytes = 0,
-      deliveredBytes = 0;
+      deliveredBytes = 0,
+      pendingRanges = 0;
 
   /// Ordered bytes handed to this read's consumer / wall time, including pauses.
   double get deliveredBps => _clock.elapsedMicroseconds == 0
@@ -89,6 +90,7 @@ class OrderedRangeScheduler {
           );
           cursor = last + 1;
         }
+        pendingRanges = pending.length;
         if (reservedBytes > peakReservedBytes) {
           peakReservedBytes = reservedBytes;
         }
@@ -97,6 +99,7 @@ class OrderedRangeScheduler {
           token.check();
           if (epoch != generation) throw const RangeCancelled();
           if (outcome.error != null) throw outcome.error!;
+          pendingRanges--;
           deliveredBytes += outcome.chunk!.bytes.length;
           yield outcome.chunk!.bytes;
         }
@@ -108,6 +111,7 @@ class OrderedRangeScheduler {
       token.cancel();
       await Future.wait(pending);
       reservedBytes = 0;
+      pendingRanges = 0;
       if (identical(_token, token)) _token = null;
       _busy = false;
       _clock.stop();

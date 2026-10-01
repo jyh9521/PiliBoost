@@ -59,7 +59,15 @@ class AcceleratorSession {
     if (!config.usesProxy || !enabled) return;
     final video = tracks.firstWhere((track) => track.kind == 'video');
     final server = create(() => video.active, () {
-      if (enabled) unawaited(restoreOriginal());
+      if (enabled) {
+        final refresh = proxy?.lastFailureReason == 'http403';
+        final callback = onRefreshRequired;
+        unawaited(
+          restoreOriginal().then((_) {
+            if (refresh && !disposed) callback?.call();
+          }),
+        );
+      }
     });
     proxy = server;
     try {
@@ -92,7 +100,7 @@ class AcceleratorSession {
     _lowSince = null;
     _quietUntil = now() + config.minimumLowDuration;
     if (networkChanged) {
-      proxy?.cache.clear();
+      proxy?.resetPool();
       _lastProbe = null;
       for (final track in tracks) {
         track.stats.clear();
@@ -121,7 +129,8 @@ class AcceleratorSession {
     // Foundation stage: fixed single upstream, no probe traffic or deferred
     // host changes on an open-ended native request. Smart CDN remains separate.
     if (config.usesProxy) {
-      if (config.mode == AcceleratorMode.rangeAuto) {
+      if (config.mode == AcceleratorMode.rangeAuto ||
+          config.mode == AcceleratorMode.multiCdn) {
         _rangePolicy.observe(
           now: time,
           bufferSeconds: bufferSeconds,
@@ -134,6 +143,17 @@ class AcceleratorSession {
       state = !playing || bufferSeconds > config.lowBufferSeconds
           ? 'normal'
           : 'lowBuffer';
+      if (playing &&
+          (config.mode == AcceleratorMode.rangeAuto ||
+              config.mode == AcceleratorMode.multiCdn)) {
+        if (bufferSeconds >= config.recoveryBufferSeconds &&
+            _rangePolicy.concurrency > 4) {
+          state = 'recovering';
+        } else if (bufferSeconds < config.lowBufferSeconds &&
+            _rangePolicy.concurrency > 4) {
+          state = 'accelerating';
+        }
+      }
       decisionReason = !playing ? 'paused' : 'proxyObservationOnly';
       return;
     }
@@ -375,6 +395,8 @@ class AcceleratorSession {
       'concurrency': proxy?.actualConcurrency ?? 1,
       'requestedConcurrency': config.parallelism,
       'parallelStatus': proxy?.parallelStatus,
+      'pool': proxy?.poolStats ?? [],
+      'refreshRequired': proxy?.lastFailureReason == 'http403',
       'switches': switches,
       'generation': generation,
       'probeBusy': _busy,
@@ -382,7 +404,7 @@ class AcceleratorSession {
       'decisionReason': decisionReason,
       'switchOutcome': switchOutcome,
       'activeRanges': proxy?.activeRanges ?? 0,
-      'queuedRanges': 0,
+      'queuedRanges': proxy?.queuedRanges ?? 0,
       'cacheBytes': proxy?.cache.bytes ?? 0,
       'cacheHits': proxy?.cache.hits ?? 0,
       'reorderBytes': proxy?.reservedBytes ?? 0,

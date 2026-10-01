@@ -6,6 +6,8 @@ import 'package:PiliPlus/services/video_accelerator/range_protocol.dart';
 import 'package:PiliPlus/services/video_accelerator/range_downloader.dart';
 import 'package:PiliPlus/services/video_accelerator/range_scheduler.dart';
 import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
+import 'package:PiliPlus/services/video_accelerator/range_cdn_pool.dart';
+import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
 
 /// Video-only loopback relay; optional validated, bounded parallel windows.
 /// Player demand drives streaming; every new request cancels the previous one.
@@ -19,6 +21,8 @@ class LocalStreamServer {
     this.rangeConcurrency = 1,
     int? initialConcurrency,
     RangeMemoryCache? cache,
+    this.candidates = const [],
+    this.config = const AcceleratorConfig(),
   }) : cache = cache ?? RangeMemoryCache(),
        desiredConcurrency = initialConcurrency ?? rangeConcurrency,
        assert(
@@ -30,11 +34,19 @@ class LocalStreamServer {
   final Map<String, String> headers;
   final HttpClient Function() clientFactory;
   final Duration timeout;
+  final AcceleratorConfig config;
+  final List<Uri> candidates;
+  RangePoolDownloader? _pool;
+  RangeCancellation? _poolToken;
+  int _poolCreatedMs = 0;
+  List<Map<String, Object?>> get poolStats => _pool?.diagnostics ?? [];
   final RangeMemoryCache cache;
   final int rangeConcurrency;
   int desiredConcurrency;
   OrderedRangeScheduler? _scheduler;
   Future<void> _parallelDrain = Future<void>.value();
+  int get queuedRanges =>
+      max(0, (_scheduler?.pendingRanges ?? 0) - activeRanges);
   int get activeRanges => _scheduler?.downloader.activeRequests ?? 0;
   int get reservedBytes => _scheduler?.reservedBytes ?? 0;
   int actualConcurrency = 1;
@@ -135,6 +147,7 @@ class LocalStreamServer {
       final response = await request.close().timeout(timeout);
       if (_closed || epoch != _epoch) throw StateError('Cancelled relay');
       final status = response.statusCode;
+      if (status == 403) throw const RangeTransferException('http403');
       if (status == 416) {
         final cr = response.headers.value('content-range');
         if (cr == null || !RegExp(r'^bytes \*/\d+$').hasMatch(cr)) {
@@ -182,15 +195,56 @@ class LocalStreamServer {
             final completion = Completer<void>();
             _parallelDrain = completion.future;
             OrderedRangeScheduler? scheduler;
+            RangeDownloader? downloader;
+            var upstreamBefore = 0;
             try {
               await previous;
               if (_closed || epoch != _epoch) throw const RangeCancelled();
-              scheduler = OrderedRangeScheduler(
-                downloader: CachedRangeDownloader(
+              final resource = RangeResource(
+                uri: remote,
+                totalBytes: total,
+                etag: etag,
+              );
+              if (candidates.isNotEmpty) {
+                if (_pool == null ||
+                    !_pool!.matches(resource) ||
+                    _clock.elapsedMilliseconds - _poolCreatedMs >
+                        config.poolLifetime.inMilliseconds) {
+                  _pool = RangePoolDownloader(
+                    headers: headers,
+                    clientFactory: clientFactory,
+                    cache: cache,
+                    primary: resource,
+                    candidates: candidates,
+                    sampleBytes: config.poolSampleBytes,
+                    probeTimeout: config.poolProbeTimeout,
+                    prepareTimeout: config.poolPrepareTimeout,
+                    cooldown: config.poolCooldown,
+                  );
+                  _poolCreatedMs = _clock.elapsedMilliseconds;
+                }
+                downloader = _pool!;
+                upstreamBefore = downloader.upstreamBytes;
+                final token = RangeCancellation();
+                _poolToken = token;
+                try {
+                  await _pool!.prepare(token);
+                } catch (_) {
+                  if (identical(_pool, downloader)) _pool = null;
+                  rethrow;
+                } finally {
+                  if (identical(_poolToken, token)) _poolToken = null;
+                }
+                if (_closed || epoch != _epoch) throw const RangeCancelled();
+              } else {
+                downloader = CachedRangeDownloader(
                   cache: cache,
                   headers: headers,
                   clientFactory: clientFactory,
-                ),
+                );
+              }
+              scheduler = OrderedRangeScheduler(
+                downloader: downloader,
                 concurrency: rangeConcurrency,
                 windowConcurrency: () {
                   actualConcurrency = desiredConcurrency;
@@ -199,12 +253,9 @@ class LocalStreamServer {
               );
               _scheduler = scheduler;
               actualConcurrency = desiredConcurrency;
-              parallelStatus = 'strongEtagParallel';
-              final resource = RangeResource(
-                uri: remote,
-                totalBytes: total,
-                etag: etag,
-              );
+              parallelStatus = _pool != null
+                  ? 'validatedCdnPool'
+                  : 'strongEtagParallel';
               unawaited(
                 r.response.done.then<void>(
                   (_) => scheduler?.invalidate(),
@@ -238,7 +289,8 @@ class LocalStreamServer {
             } finally {
               scheduler?.invalidate();
               // addStream cancels its subscription and waits for async* finally.
-              upstreamBytes += scheduler?.downloader.upstreamBytes ?? 0;
+              upstreamBytes +=
+                  (downloader?.upstreamBytes ?? 0) - upstreamBefore;
               if (identical(_scheduler, scheduler)) _scheduler = null;
               completion.complete();
             }
@@ -300,7 +352,9 @@ class LocalStreamServer {
           epoch == _epoch &&
           epoch >= 0) {
         errors++;
-        lastFailureReason = error is FormatException
+        lastFailureReason = error is RangeTransferException
+            ? error.reason
+            : error is FormatException
             ? error.message
             : error.runtimeType.toString();
         onFailure?.call();
@@ -331,7 +385,13 @@ class LocalStreamServer {
     _buckets.update(second, (n) => n + count, ifAbsent: () => count);
   }
 
+  void resetPool() {
+    _pool = null;
+    cache.clear();
+  }
+
   void cancelRequests() {
+    _poolToken?.cancel();
     _scheduler?.invalidate();
     _epoch++;
     if (_client != null) cancellations++;
@@ -348,5 +408,6 @@ class LocalStreamServer {
     await _server?.close(force: true);
     await _parallelDrain;
     cache.clear();
+    _pool = null;
   }
 }

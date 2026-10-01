@@ -1,12 +1,77 @@
+import 'dart:async';
 // ignore_for_file: cascade_invocations
 import 'dart:typed_data';
+import 'dart:io';
+
+import 'package:PiliPlus/services/video_accelerator/range_scheduler.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:PiliPlus/services/video_accelerator/range_concurrency_policy.dart';
 import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
 import 'package:PiliPlus/services/video_accelerator/range_downloader.dart';
 
+class _DemandDownloader extends RangeDownloader {
+  _DemandDownloader()
+    : super(
+        headers: const {},
+        clientFactory: HttpClient.new,
+        maxChunkBytes: 1024,
+      );
+  int started = 0;
+  @override
+  Future<RangeChunk> fetch(
+    RangeResource resource,
+    int start,
+    int end,
+    RangeCancellation token,
+  ) async {
+    token.check();
+    started++;
+    return RangeChunk(
+      start,
+      Uint8List(end - start + 1),
+      Duration.zero,
+      Duration.zero,
+      1,
+    );
+  }
+}
+
 void main() {
+  test(
+    'dynamic width changes only next window, with paused demand bounded',
+    () async {
+      final d = _DemandDownloader();
+      var width = 4;
+      final s = OrderedRangeScheduler(
+        downloader: d,
+        concurrency: 16,
+        chunkBytes: 1024,
+        maxMemoryBytes: 16 * 1024,
+        windowConcurrency: () => width,
+      );
+      final r = RangeResource(
+        uri: Uri.parse('https://fixture/v'),
+        totalBytes: 12 * 1024,
+        etag: '"v"',
+      );
+      final iterator = StreamIterator(s.read(r, 0, r.totalBytes - 1));
+      expect(await iterator.moveNext(), isTrue);
+      expect(d.started, 4);
+      width = 8;
+      for (var i = 0; i < 3; i++) {
+        expect(await iterator.moveNext(), isTrue);
+      }
+      expect(d.started, 4);
+      expect(await iterator.moveNext(), isTrue);
+      expect(d.started, 12);
+      while (await iterator.moveNext()) {}
+      expect(s.deliveredBytes, r.totalBytes);
+      expect(s.peakReservedBytes, 8 * 1024);
+      expect(s.pendingRanges, 0);
+      expect(s.reservedBytes, 0);
+    },
+  );
   test('adaptive steps require persistent deficit; target sufficiency stops growth', () {
     final p = RangeConcurrencyPolicy();
     void observe(

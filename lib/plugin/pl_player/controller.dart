@@ -660,6 +660,12 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         await accelerator.startProxy(
           create: (source, failure) => LocalStreamServer(
             source: source,
+            config: accelerator.config,
+            candidates: accelerator.config.mode == AcceleratorMode.multiCdn
+                ? accelerator.tracks
+                      .firstWhere((t) => t.kind == 'video')
+                      .candidates
+                : const [],
             cache: RangeMemoryCache(
               maxBytes:
                   accelerator.config.maxMemoryBytes -
@@ -669,7 +675,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
             ),
             rangeConcurrency: accelerator.config.parallelism,
             initialConcurrency:
-                accelerator.config.mode == AcceleratorMode.rangeAuto ? 4 : null,
+                (accelerator.config.mode == AcceleratorMode.rangeAuto ||
+                    accelerator.config.mode == AcceleratorMode.multiCdn)
+                ? 4
+                : null,
             headers: {
               'user-agent': BrowserUa.pc,
               'referer': HttpString.baseUrl,

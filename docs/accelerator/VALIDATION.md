@@ -47,3 +47,7 @@ V1c 尚待 Android 真视频、长播、后台/PiP、错误恢复与网络切换
 ## V2 core 增量（2026-10-01）
 
 新增独立单CDN分片 transport 和 bounded ordered scheduler，尚未接入播放器、未开放设置。新增23项真实HTTP/TCP测试；完整模块84项通过（包含Windows native），基线61项通过。详情见 V2CORE.md。每片/窗口、重试与请求deadline有明确预算，代取消后旧reader需清理再开启seek代。
+
+## V2/V3 播放器接入（2026-10-01）
+
+V2接入阶段97项通过（包含single/4路Windows native）；V3最终验证覆盖Multi-Range Auto/4/8/12/16、有限RAM LRU缓存、多CDN强validator/头尾准入、加权调度/failover/cooldown和原播放恢复，见V2CORE.md、V3.md。旧core-only和V1c计数仅表示历史阶段，不是当前功能限制。最终APK交付后统一进行Android实机验收，不逐阶段安装手机。

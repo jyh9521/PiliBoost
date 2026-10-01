@@ -8,6 +8,7 @@ enum AcceleratorMode {
   multiRange12,
   multiRange16,
   rangeAuto,
+  multiCdn,
 }
 
 /// Playback policy and bounded session RAM budgets; opt-in parallel modes.
@@ -29,6 +30,11 @@ class AcceleratorConfig {
     this.maxProbesPerRound = 2,
     this.minimumSampleBytes = 16 * 1024,
     this.maxSwitches = 4,
+    this.poolSampleBytes = 64 * 1024,
+    this.poolProbeTimeout = const Duration(seconds: 4),
+    this.poolPrepareTimeout = const Duration(seconds: 8),
+    this.poolCooldown = const Duration(seconds: 30),
+    this.poolLifetime = const Duration(seconds: 90),
     this.maxMemoryBytes = 12 * 1024 * 1024,
     this.maxAheadBytes = 4 * 1024 * 1024,
     this.maxBehindBytes = 4 * 1024 * 1024,
@@ -39,6 +45,7 @@ class AcceleratorConfig {
        assert(probeBytes > 0),
        assert(maxProbesPerRound >= 2);
 
+  int get maxConcurrentRequests => parallelism;
   bool get usesProxy => mode == AcceleratorMode.rangeProxy || parallelism > 1;
   int get parallelism => switch (mode) {
     AcceleratorMode.multiRange4 => 4,
@@ -46,8 +53,14 @@ class AcceleratorConfig {
     AcceleratorMode.multiRange12 => 12,
     AcceleratorMode.multiRange16 => 16,
     AcceleratorMode.rangeAuto => 16,
+    AcceleratorMode.multiCdn => 16,
     _ => 1,
   };
+  final Duration poolProbeTimeout,
+      poolPrepareTimeout,
+      poolCooldown,
+      poolLifetime;
+  final int poolSampleBytes;
   final int maxMemoryBytes, maxAheadBytes, maxBehindBytes;
   final AcceleratorMode mode;
   final double safetyFactor, switchGain;

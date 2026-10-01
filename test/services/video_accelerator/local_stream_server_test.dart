@@ -252,6 +252,60 @@ void main() {
       },
     );
   });
+  test(
+    'multi-range mode notifies playurl refresh once after HTTP 403 recovery',
+    () async {
+      final origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      origin.listen((r) async {
+        r.response.statusCode = 403;
+        r.response.contentLength = 0;
+        await r.response.close();
+      });
+      final source = Uri.parse('http://127.0.0.1:${origin.port}/v');
+      var refreshed = 0, recovered = 0;
+      final session = AcceleratorSession(
+        config: const AcceleratorConfig(mode: AcceleratorMode.multiRange4),
+        tracks: [
+          AcceleratorTrack(
+            kind: 'video',
+            original: source,
+            candidates: [source],
+          ),
+        ],
+        probe: (a, b, c) async => const ProbeResult(),
+      );
+      session.onRefreshRequired = () => refreshed++;
+      session.onSwitch = (v, a) async {
+        recovered++;
+        return true;
+      };
+      await session.startProxy(
+        create: (source, failure) => LocalStreamServer(
+          source: source,
+          headers: const {},
+          clientFactory: HttpClient.new,
+          rangeConcurrency: 4,
+          onFailure: failure,
+        ),
+      );
+      final client = HttpClient();
+      try {
+        final request = await client.getUrl(session.proxy!.uri);
+        request.headers.set('range', 'bytes=0-1023');
+        await (await request.close()).drain<void>();
+      } catch (_) {}
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(session.bypassed, isTrue);
+      expect(refreshed, 1);
+      expect(recovered, 1);
+      await session.restoreOriginal();
+      expect(refreshed, 1);
+      expect(recovered, 1);
+      client.close(force: true);
+      session.dispose();
+      await origin.close(force: true);
+    },
+  );
   test('OFF never starts a proxy or allocates its server', () async {
     final s = AcceleratorSession(
       config: const AcceleratorConfig(),

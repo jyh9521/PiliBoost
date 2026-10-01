@@ -166,7 +166,7 @@ class RangeDownloader {
         throw const RangeTransferException('transientStatus', retryable: true);
       }
       // 429/403/412, redirects and Range-ignored 200 never amplify traffic.
-      if (status != 206) throw const RangeTransferException('rangeStatus');
+      if (status != 206) throw RangeTransferException('http$status');
       final cr = ContentRange.parse(
         response.headers.value('content-range') ?? '',
       );

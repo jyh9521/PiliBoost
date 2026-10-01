@@ -30,16 +30,9 @@ void main() {
     await tester.tap(find.text('多线程 / Multi-Range · 4'));
     await tester.pumpAndSettle();
     expect(selected, AcceleratorMode.multiRange4);
-    final futureModes = tester
-        .widgetList<ListTile>(find.byType(ListTile))
-        .where(
-          (tile) =>
-              tile.title is Text &&
-              (tile.title as Text).data!.contains('Multi-CDN'),
-        );
-    expect(
-      futureModes.every((tile) => !tile.enabled && tile.onTap == null),
-      isTrue,
-    );
+    await tester.ensureVisible(find.text('多 CDN 多线程 / Multi-CDN · Auto（实验）'));
+    await tester.tap(find.text('多 CDN 多线程 / Multi-CDN · Auto（实验）'));
+    await tester.pumpAndSettle();
+    expect(selected, AcceleratorMode.multiCdn);
   });
 }
