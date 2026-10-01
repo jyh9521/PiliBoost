@@ -437,6 +437,7 @@ class AcceleratorSession {
       'requestedConcurrency': config.parallelism,
       'parallelStatus': proxy?.parallelStatus,
       'validatorStatus': proxy?.validatorStatus,
+      'cdnCapabilities': proxy?.cdnCapabilities ?? const [],
       'poolRejectedCandidates': proxy?.rejectedPoolCandidates ?? 0,
       'poolRejectionReasons': proxy?.poolRejectionReasons ?? const {},
       'pool': proxy?.poolStats ?? [],

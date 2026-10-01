@@ -12,7 +12,7 @@ class RangeResource {
         totalBytes <= 0) {
       throw ArgumentError('Invalid range resource');
     }
-    if (etag != null && !RegExp(r'^"[\x21\x23-\x7e]*"$').hasMatch(etag!)) {
+    if (etag != null && !EntityTag.isTransportableStrong(etag)) {
       throw ArgumentError('A strong ETag is required when provided');
     }
   }

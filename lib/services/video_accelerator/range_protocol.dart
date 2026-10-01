@@ -1,3 +1,29 @@
+/// RFC 9110 section 8.8.3: opaque octets, not a quoted-string to unescape.
+class EntityTag {
+  static String status(String? value) {
+    if (value == null) return 'missing';
+    final weak = value.startsWith('W/');
+    final tag = weak ? value.substring(2) : value;
+    if (tag.length < 2 || !tag.startsWith('"') || !tag.endsWith('"')) {
+      return 'unsupported';
+    }
+    for (final c in tag.substring(1, tag.length - 1).codeUnits) {
+      if (!(c == 0x21 ||
+          (c >= 0x23 && c <= 0x7e) ||
+          (c >= 0x80 && c <= 0xff))) {
+        return 'unsupported';
+      }
+    }
+    return weak ? 'weak' : 'strong';
+  }
+
+  static bool isStrong(String? value) => status(value) == 'strong';
+
+  // dart:io outgoing header validation only accepts ASCII field values.
+  static bool isTransportableStrong(String? value) =>
+      isStrong(value) && value!.codeUnits.every((c) => c < 0x80);
+}
+
 /// A single HTTP byte range. Multipart requests are deliberately not supported.
 class ByteRange {
   const ByteRange(this.start, this.end, this.suffix);

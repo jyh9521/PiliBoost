@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:PiliPlus/services/video_accelerator/range_protocol.dart';
+import 'package:PiliPlus/services/video_accelerator/cdn_capability.dart';
 import 'package:PiliPlus/services/video_accelerator/range_downloader.dart';
 import 'package:PiliPlus/services/video_accelerator/range_scheduler.dart';
 import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
@@ -58,6 +59,11 @@ class LocalStreamServer {
   int actualConcurrency = 1;
   String parallelStatus = 'singleConnection';
   String validatorStatus = 'unmeasured';
+  final _capabilities = <String, CdnCapability>{};
+  List<Map<String, Object?>> get cdnCapabilities => [
+    for (final entry in _capabilities.entries)
+      {'host': entry.key, ...entry.value.toJson()},
+  ];
   int get rejectedPoolCandidates => _pool?.rejectedCandidates ?? 0;
   Map<String, int> get poolRejectionReasons =>
       _pool?.rejectionReasons ?? const {};
@@ -160,30 +166,33 @@ class LocalStreamServer {
       final response = await request.close().timeout(timeout);
       if (_closed || epoch != _epoch) throw StateError('Cancelled relay');
       final status = response.statusCode;
-      if (status == 403) throw const RangeTransferException('http403');
+      final capability = CdnCapability.inspect(
+        statusCode: status,
+        contentLength: response.contentLength,
+        requestedRange: range,
+        contentRange: response.headers.value('content-range'),
+        etag: response.headers.value('etag'),
+        encoding: response.headers.value('content-encoding'),
+      );
+      // Session-local, latest demand evidence per host; bounded and sanitized.
+      _capabilities.remove(remote.host);
+      _capabilities[remote.host] = capability;
+      if (_capabilities.length > 32) {
+        _capabilities.remove(_capabilities.keys.first);
+      }
+      validatorStatus = capability.validatorStatus;
+      if (capability.failureReason != null) {
+        actualConcurrency = 1;
+        parallelStatus = capability.failureReason!;
+        throw RangeTransferException(capability.failureReason!);
+      }
       if (status == 416) {
-        final cr = response.headers.value('content-range');
-        if (cr == null || !RegExp(r'^bytes \*/\d+$').hasMatch(cr)) {
-          throw const FormatException('Invalid unsatisfied range');
-        }
-        r.response.headers.set('content-range', cr);
+        r.response.headers.set(
+          'content-range',
+          response.headers.value('content-range')!,
+        );
         await _empty(r, 416);
         return;
-      }
-      if (range != null) {
-        if (status != 206) throw const FormatException('Range not supported');
-        final cr = ContentRange.parse(
-          response.headers.value('content-range') ?? '',
-        );
-        if (!cr.matches(range) || response.contentLength != cr.length) {
-          throw const FormatException('Mismatched upstream range');
-        }
-      } else if (status != 200 || response.contentLength < 0) {
-        throw const FormatException('Invalid upstream response');
-      }
-      if ((response.headers.value('content-encoding') ?? 'identity') !=
-          'identity') {
-        throw const FormatException('Encoded upstream content');
       }
       r.response.statusCode = status;
       r.response.contentLength = response.contentLength;
@@ -194,15 +203,8 @@ class LocalStreamServer {
       r.response.headers.set('cache-control', 'no-store');
       if (rangeConcurrency > 1 && r.method == 'GET') {
         final etag = response.headers.value('etag');
-        validatorStatus = etag == null
-            ? 'missing'
-            : etag.startsWith('W/')
-            ? 'weak'
-            : RegExp(r'^"[\x21\x23-\x7e]*"$').hasMatch(etag)
-            ? 'strong'
-            : 'unsupported';
         // A strong validator is required before combining separate responses.
-        if (etag != null && RegExp(r'^"[\x21\x23-\x7e]*"$').hasMatch(etag)) {
+        if (capability.parallelEligible) {
           final cr = status == 206
               ? ContentRange.parse(response.headers.value('content-range')!)
               : null;
@@ -327,7 +329,7 @@ class LocalStreamServer {
           }
         }
         actualConcurrency = 1;
-        parallelStatus = 'missingStrongValidator';
+        parallelStatus = capability.toJson()['reason']! as String;
       }
       committed = true;
       if (r.method != 'HEAD') {
@@ -418,6 +420,8 @@ class LocalStreamServer {
   void resetPool() {
     _pool = null;
     cache.clear();
+    _capabilities.clear();
+    validatorStatus = 'unmeasured';
   }
 
   void cancelRequests() {
