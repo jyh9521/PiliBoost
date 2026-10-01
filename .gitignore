@@ -166,4 +166,5 @@ test*
 /docs/accelerator/stall-fix/
 /docs/accelerator/proxy-stage/
 /docs/accelerator/publish-local/
+/docs/accelerator/range-core-local/
 /tool/phase0/capture_evidence.py

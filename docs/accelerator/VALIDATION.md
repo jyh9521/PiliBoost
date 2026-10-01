@@ -43,3 +43,7 @@ Android 构建使用 `tool/phase1/build_android_test.ps1`，显式传入本地 S
 用户反馈 V1b 同一视频复测不再卡顿；截图显示该次没有切线，尚未进行受控 OFF/ON 对照，未归因为确定的加速收益。
 V1c 尚待 Android 真视频、长播、后台/PiP、错误恢复与网络切换验证。Windows 合成测试不替代其他平台实测。
 后续在本阶段稳定后实现 V2 bounded cache/chunk scheduler 与动态并发，再推进 V3 多 CDN。
+
+## V2 core 增量（2026-10-01）
+
+新增独立单CDN分片 transport 和 bounded ordered scheduler，尚未接入播放器、未开放设置。新增23项真实HTTP/TCP测试；完整模块84项通过（包含Windows native），基线61项通过。详情见 V2CORE.md。每片/窗口、重试与请求deadline有明确预算，代取消后旧reader需清理再开启seek代。
