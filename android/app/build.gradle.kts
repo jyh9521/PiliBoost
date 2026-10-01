@@ -61,16 +61,16 @@ android {
     }
 
     buildTypes {
-        all {
-            signingConfig = config ?: signingConfigs["debug"]
-        }
         release {
+            // Separate fork identity; existing debug package/data stays intact.
+            // Application identity is set through the variant API below.
+            signingConfig = config
             if (project.hasProperty("dev")) {
                 applicationIdSuffix = ".dev"
                 resValue(
                     type = "string",
                     name = "app_name",
-                    value = "PiliPlus dev",
+                    value = "PiliBoost dev",
                 )
             }
 //            proguardFiles(
@@ -79,6 +79,7 @@ android {
 //            )
         }
         debug {
+            signingConfig = signingConfigs["debug"]
             applicationIdSuffix = ".debug"
         }
     }
@@ -88,6 +89,14 @@ android {
         variant.outputs.forEach { output ->
             (output as ApkVariantOutputImpl).versionCodeOverride = flutter.versionCode
         }
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val releaseId = if (project.hasProperty("dev"))
+            "com.jyh9521.piliboost.dev" else "com.jyh9521.piliboost"
+        variant.applicationId.set(releaseId)
     }
 }
 

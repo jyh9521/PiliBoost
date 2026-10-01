@@ -1,26 +1,51 @@
 <div align="center">
     <img width="200" height="200" src="assets/images/logo/logo.png" alt="PiliPlus logo">
-    <h1>PiliPlus</h1>
+    <h1>PiliBoost</h1>
 </div>
 
-## PiliBoost Streaming Accelerator (experimental V1a)
+## PiliBoost · 0.1.0 release preparation
 
-New fork features use the PiliBoost name. The accelerator is OFF by default;
-select Auto or Smart CDN under Audio/Video Settings → Streaming Accelerator.
-V1a keeps existing CDN preferences and DASH EDL playback, uses bounded media
-Range probes only during sustained low buffering, and applies EWMA, switching
-gain thresholds and cooldown. Failures return to the original source.
-Multi-Range, parallel Multi-CDN and live acceleration are not implemented in V1a.
-See `docs/accelerator/V1.md` for implementation/test status and `NOTICE` for
-algorithm references and attribution.
+A [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) fork with adaptive CDN selection and bounded streaming acceleration.
+Development belongs to [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost); upstream is a reference and synchronization source.
+
+### Streaming Accelerator
+
+Audio/Video Settings → **Streaming Accelerator**. Default: **OFF**. Changes apply on the next source load or quality change.
+
+| Mode | Implementation |
+| --- | --- |
+| OFF | Original playback without accelerator requests |
+| Auto / Smart CDN | Bounded Range probes during sustained low buffering, EWMA selection, cooldown and source fallback |
+| Proxy | Single-connection video Range relay; direct audio |
+| Multi-Range 4/8/12/16 | Bounded single-CDN parallel chunks, ordered output and RAM cache |
+| Multi-Range Auto | Starts at 4 lanes; adapts to buffering and fresh ordered output within the configured cap |
+| Multi-CDN Auto | Experimental pool admission using strong ETag, exact total and matching head/tail samples |
+
+Lane caps: 4/8/12/16. Cache: 4/8/16 MiB; reorder payload: at most 4 MiB. These are not process RSS limits.
+Missing or transport-incompatible strong validators stay single-connection. Errors attempt original-source recovery.
+No disk cache, live acceleration, parallel audio or unvalidated cross-CDN byte splicing.
+
+### Verification
+
+Diagnostics separate received network payload, fresh ordered output, cache output, observed concurrency, buffering and CDN capabilities/fallback reasons.
+Copy sanitized JSON or manually record OFF/ON snapshots. Pairs do not prove matched content or acceleration benefit.
+Final device testing should use identical content, quality, position and network, including sustained playback, seeking, quality changes, background/PiP and network transitions.
+Automated tests and controlled native fixtures are validated; real CDN gains and Android long-play acceptance remain pending.
+
+### Release and build
+
+Version: **0.1.0+2**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
+A dedicated release key is required. Existing `com.example.piliplus.debug` test builds remain separate; data is not migrated automatically.
+Published builds belong in this fork's [Releases](https://github.com/jyh9521/PiliBoost/releases). Release preparation/build output is not stable device acceptance.
+[Build/signing](docs/accelerator/RELEASE.md) · [Budgets/export](docs/accelerator/V8SETTINGS.md) · [Validation](docs/accelerator/VALIDATION.md) · [Attribution](NOTICE).
 
 <div align="center">
 
 [中文](README.md) | English
 
-![GitHub repo size](https://img.shields.io/github/repo-size/bggRGjQaUbCoE/PiliPlus)
-![GitHub Repo stars](https://img.shields.io/github/stars/bggRGjQaUbCoE/PiliPlus)
-![GitHub all releases](https://img.shields.io/github/downloads/bggRGjQaUbCoE/PiliPlus/total)
+![GitHub repo size](https://img.shields.io/github/repo-size/jyh9521/PiliBoost)
+![GitHub Repo stars](https://img.shields.io/github/stars/jyh9521/PiliBoost)
+![GitHub all releases](https://img.shields.io/github/downloads/jyh9521/PiliBoost/total)
 
 </div>
 
@@ -39,11 +64,11 @@ algorithm references and attribution.
 
 ## Download
 
-Download a build from [Releases](https://github.com/bggRGjQaUbCoE/PiliPlus/releases), or clone the repository and build it locally.
+Download a build from [Releases](https://github.com/jyh9521/PiliBoost/releases), or clone the repository and build it locally.
 
 ## Disclaimer
 
-PiliPlus is a personal project developed for educational purposes, intended only for learning and testing. Please delete it within 24 hours of downloading.
+PiliBoost is a PiliPlus-based personal project developed for educational purposes, intended only for learning and testing. Please delete it within 24 hours of downloading.
 All APIs used were collected from the official website. This project does not provide any cracked content.
 
 Credit to the original project: [guozhigq/pilipala](https://github.com/guozhigq/pilipala).
@@ -62,14 +87,10 @@ Thank you for using PiliPlus.
 
 ## Star History
 
-<a href="https://star-history.dera.page/#bggRGjQaUbCoE/PiliPlus&Date">
+<a href="https://star-history.dera.page/#jyh9521/PiliBoost&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=jyh9521/PiliBoost&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=jyh9521/PiliBoost&type=Date" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=jyh9521/PiliBoost&type=Date" />
  </picture>
 </a>
-
-### V1c local Range relay (experimental)
-
-Streaming Accelerator now has a separate, opt-in single-upstream Proxy mode. DASH video uses a loopback relay; audio stays direct. It streams player GET/HEAD/single-range requests, supports seeking, and reports forwarded video bytes and an approximately three-second rate window. It does not probe/switch CDNs, prefetch, cache, or download in parallel. Existing Auto/Smart CDN behavior is unchanged; OFF remains the default. Relay errors attempt original-source recovery and bypass the relay for that session. See `docs/accelerator/V1C.md` for verification and device-test boundaries.

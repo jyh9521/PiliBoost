@@ -1,0 +1,34 @@
+name: Review upstream changes
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    if: github.repository == 'jyh9521/PiliBoost'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fetch and compare upstream without modifying the branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/bggRGjQaUbCoE/PiliPlus.git main
+          upstream=$(git rev-parse FETCH_HEAD)
+          base=$(git merge-base HEAD "$upstream")
+          {
+            echo "Fork: $(git rev-parse HEAD)"
+            echo "Upstream: $upstream"
+            echo "Merge base: $base"
+            git diff --stat "$base" "$upstream"
+          } | tee upstream-review.txt
+          cat upstream-review.txt >> "$GITHUB_STEP_SUMMARY"
+          git diff --name-status "$base" "$upstream" > upstream-files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-review
+          path: |
+            upstream-review.txt
+            upstream-files.txt

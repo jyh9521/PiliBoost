@@ -3,29 +3,54 @@
     <img width="200" height="200" src="assets/images/logo/logo.png">
 </div>
 
-## PiliBoost Streaming Accelerator（实验性 V1a）
+## PiliBoost · 0.1.0 发布准备
 
-本 fork 的新功能统一命名为 PiliBoost。播放加速默认关闭；音视频设置中的
-“播放加速 / Streaming Accelerator”可选择 Auto 或 CDN 优选。V1a 保留原
-CDN 设置与 DASH EDL 播放链路，持续低缓冲时才执行有限媒体 Range 测速，
-使用 EWMA、切换收益门槛与冷却选择线路，失败绕回原源。
-V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线程模式尚未开放。
-详细实施/测试状态见 `docs/accelerator/V1.md`，算法参考与署名见 `NOTICE`。
+基于 [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) 的自适应 CDN 与有界流媒体加速客户端。
+主仓库为 [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost)，上游仅作为架构参考与同步来源。
 
+### 播放加速
 
+音视频设置 → **播放加速 / Streaming Accelerator**，默认 **OFF**；设置在下次加载视频或切换画质时生效。
+
+| 模式 | 当前实现 |
+| --- | --- |
+| OFF | 原播放链路，不创建加速请求 |
+| Auto / Smart CDN | 持续低缓冲时有限 Range 探测、EWMA 优选、切换冷却与原源回退 |
+| Proxy | 视频单连接本地 Range 代理，音频直连 |
+| Multi-Range 4/8/12/16 | 单 CDN 有界分片并发，按序输出与 RAM 缓存 |
+| Multi-Range Auto | 4 路起步，按缓冲与网络顺序输出速率调整，受并发上限约束 |
+| Multi-CDN Auto | 实验模式；强 ETag、总长度与头尾采样一致后使用备用线路 |
+
+并发上限可选 4/8/12/16 路，缓存预算可选 4/8/16 MiB，重排载荷最多 4 MiB。
+无可传输的强 ETag 时保持单连接；失败尝试原源恢复。缓存不写磁盘，预算不是进程总内存上限。
+直播、音频并发以及任意 CDN 的无校验拼接不在当前实现中。
+
+### 如何验证
+
+诊断页分别显示网络接收、网络顺序输出、缓存输出、实际观测并发、缓冲和 CDN 能力/降级原因。
+可复制脱敏 JSON，分别记录 OFF/ON 并复制对照。对照仅为手工快照，不自动证明同视频或加速收益。
+统一实机测试应保持相同视频、画质、位置与网络，观察持续播放、seek、切画质、后台/PiP和网络切换。
+当前自动化与受控原生播放验证已完成；真实 CDN 收益及 Android 长时间播放仍待统一验收。
+
+### 发布与构建
+
+当前版本为 **0.1.0+2**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
+release 使用独立发布密钥；此前 `com.example.piliplus.debug` 测试包独立保留，数据不会自动迁移。
+从本仓库 [Releases](https://github.com/jyh9521/PiliBoost/releases) 获取已发布构建；本轮处于发布准备阶段，不把 release 构建等同于稳定版验收。
+[构建与签名说明](docs/accelerator/RELEASE.md) · [V8 设置与导出](docs/accelerator/V8SETTINGS.md) · [验证说明](docs/accelerator/VALIDATION.md) · [算法署名](NOTICE)。
 
 <div align="center">
-    <h1>PiliPlus</h1>
+    <h1>PiliBoost</h1>
 <div align="center">
 
 中文 | [English](README.en.md)
 
-![GitHub repo size](https://img.shields.io/github/repo-size/bggRGjQaUbCoE/PiliPlus) 
-![GitHub Repo stars](https://img.shields.io/github/stars/bggRGjQaUbCoE/PiliPlus) 
-![GitHub all releases](https://img.shields.io/github/downloads/bggRGjQaUbCoE/PiliPlus/total) 
+![GitHub repo size](https://img.shields.io/github/repo-size/jyh9521/PiliBoost)
+![GitHub Repo stars](https://img.shields.io/github/stars/jyh9521/PiliBoost)
+![GitHub all releases](https://img.shields.io/github/downloads/jyh9521/PiliBoost/total)
 </div>
     <p>使用Flutter开发的BiliBili第三方客户端</p>
-    
+
 <img src="assets/screenshots/510shots_so.png" width="32%" alt="home" />
 <img src="assets/screenshots/174shots_so.png" width="32%" alt="home" />
 <img src="assets/screenshots/850shots_so.png" width="32%" alt="home" />
@@ -37,7 +62,11 @@ V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线�
 
 <br/>
 
-## 适配平台
+## 上游基础功能与平台
+
+以下平台/功能清单继承自 PiliPlus；不表示 PiliBoost 加速功能已完成所有平台实机验收。
+
+### 适配平台
 
 - [x] Android
 - [x] iOS
@@ -171,7 +200,7 @@ V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线�
   - [x] 观看记录
   - [x] 我的收藏
   - [x] 站内私信
-  
+
 - [x] 动态相关
   - [x] 全部、投稿、番剧分类查看
   - [x] 动态评论查看
@@ -193,14 +222,14 @@ V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线�
   - [x] 字幕
   - [x] 记忆播放
   - [x] 视频比例：高度/宽度适应、填充、包含等
-     
+
 - [x] 搜索相关
   - [x] 热搜
   - [x] 搜索历史
   - [x] 默认搜索词
   - [x] 投稿、番剧、直播间、用户搜索
   - [x] 视频搜索排序、按时长筛选
-    
+
 - [x] 视频详情页相关
   - [x] 视频选集(分p)切换
   - [x] 点赞、投币、收藏/取消收藏
@@ -212,7 +241,7 @@ V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线�
   - [x] 评论笔记图片查看、保存
 
 - [x] 设置相关
-  - [x] 画质、音质、解码方式预设      
+  - [x] 画质、音质、解码方式预设
   - [x] 图片质量设定
   - [x] 主题模式：亮色/暗色/跟随系统
   - [x] 震动反馈(可选)
@@ -225,13 +254,13 @@ V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线�
 
 ## 下载
 
-可以从 [Releases](https://github.com/bggRGjQaUbCoE/PiliPlus/releases) 下载，或克隆仓库拉取代码后在本地编译。
+可以从 [Releases](https://github.com/jyh9521/PiliBoost/releases) 下载，或克隆仓库拉取代码后在本地编译。
 
 <br/>
 
 ## 声明
 
-此项目（PiliPlus）是个人为了兴趣而开发，仅用于学习和测试，请于下载后24小时内删除。
+此项目（PiliBoost，基于 PiliPlus）是个人为了兴趣而开发，仅用于学习和测试，请于下载后24小时内删除。
 所用API皆从官方网站收集，不提供任何破解内容。
 在此致敬原作者：[guozhigq/pilipala](https://github.com/guozhigq/pilipala)
 在此致敬上游作者：[orz12/PiliPalaX](https://github.com/orz12/PiliPalaX)
@@ -256,14 +285,10 @@ V1a 不实现多 Range、多 CDN 并发、直播加速或无限预读；多线�
 
 ## Star History
 
-<a href="https://star-history.dera.page/#bggRGjQaUbCoE/PiliPlus&Date">
+<a href="https://star-history.dera.page/#jyh9521/PiliBoost&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=bggRGjQaUbCoE/PiliPlus&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=jyh9521/PiliBoost&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=jyh9521/PiliBoost&type=Date" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=jyh9521/PiliBoost&type=Date" />
  </picture>
 </a>
-
-### V1c 本地 Range 代理（实验）
-
-播放加速设置新增独立的单连接 Proxy 模式。只代理 DASH 视频，音频保持原路径；透传播放器 GET/HEAD/单 Range 请求，支持 seek，诊断显示实际视频转发字节及约 3 秒窗口速率。该模式不做 CDN 探测切换、不增加缓存/预读，不是多线程加速；原 Auto/CDN 优选行为保持不变，默认仍 OFF。错误尝试恢复远端原源并停用本会话代理。开发验证与实机边界见 `docs/accelerator/V1C.md`。
