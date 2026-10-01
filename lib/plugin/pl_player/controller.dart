@@ -1,4 +1,5 @@
 import 'package:PiliPlus/services/video_accelerator/source_transition_queue.dart';
+import 'package:PiliPlus/services/video_accelerator/accelerator_diagnostics.dart';
 import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
 
@@ -632,6 +633,12 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       _processing = true;
       await previousAccelerator?.close();
       if (!load.isCurrent) return;
+      // Clear previous telemetry when a new source owns playback, including OFF.
+      if (accelerator == null) {
+        AcceleratorDiagnostics.publish(const {'state': 'off', 'mode': 'off'});
+      } else {
+        accelerator.publish();
+      }
       this.isLive = isLive;
       _videoType = videoType ?? VideoType.ugc;
       this.width = width;

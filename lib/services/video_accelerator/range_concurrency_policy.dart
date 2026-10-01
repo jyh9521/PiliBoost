@@ -4,7 +4,9 @@ class RangeConcurrencyPolicy {
     this.lowBufferSeconds = 8,
     this.recoveryBufferSeconds = 20,
     this.interval = const Duration(seconds: 5),
-  });
+    this.maxConcurrency = 16,
+  }) : assert(maxConcurrency >= 4 && maxConcurrency <= 16);
+  final int maxConcurrency;
   final double lowBufferSeconds, recoveryBufferSeconds;
   final Duration interval;
   int concurrency = 4;
@@ -36,8 +38,8 @@ class RangeConcurrencyPolicy {
         bufferSeconds < lowBufferSeconds &&
         throughputBps < requiredBps) {
       _lowSince ??= now;
-      if (now - _lowSince! >= interval && concurrency < 16) {
-        concurrency += 4;
+      if (now - _lowSince! >= interval && concurrency < maxConcurrency) {
+        concurrency = (concurrency + 4).clamp(4, maxConcurrency);
         _lastChange = now;
         _lowSince = now;
       }

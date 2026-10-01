@@ -7,6 +7,10 @@ void main() {
   testWidgets('settings default OFF; selection is persisted through callback', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1000, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     var selected = AcceleratorMode.off;
     await tester.pumpWidget(
       MaterialApp(

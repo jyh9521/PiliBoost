@@ -1,4 +1,8 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
 import 'dart:convert';
+
+import 'package:flutter/services.dart';
+import 'package:PiliPlus/services/video_accelerator/diagnostic_export.dart';
 
 import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_diagnostics.dart';
@@ -10,8 +14,12 @@ class StreamingAcceleratorPage extends StatefulWidget {
     super.key,
     required this.mode,
     required this.onChanged,
+    this.budgets = const AcceleratorBudgets(),
+    this.onBudgetsChanged,
   });
   final AcceleratorMode mode;
+  final AcceleratorBudgets budgets;
+  final Future<void> Function(AcceleratorBudgets)? onBudgetsChanged;
   final Future<void> Function(AcceleratorMode) onChanged;
   @override
   State<StreamingAcceleratorPage> createState() =>
@@ -21,6 +29,22 @@ class StreamingAcceleratorPage extends StatefulWidget {
 class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
   late AcceleratorMode mode = widget.mode;
   bool saving = false;
+  late AcceleratorBudgets budgets = widget.budgets;
+  Future<void> saveBudgets(AcceleratorBudgets next) async {
+    if (saving || widget.onBudgetsChanged == null) return;
+    setState(() => saving = true);
+    try {
+      await widget.onBudgetsChanged!(next);
+      if (mounted) setState(() => budgets = next);
+    } catch (_) {
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('保存失败，保留原设置')));
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
   Future<void> select(AcceleratorMode next) async {
     if (saving) return;
     setState(() => saving = true);
@@ -38,7 +62,7 @@ class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
     body: ListView(
       children: [
         const ListTile(
-          title: Text('PiliBoost Accelerator · V3'),
+          title: Text('PiliBoost Accelerator · V8'),
           subtitle: Text('默认关闭。设置在下次加载视频/切换画质时生效；原 CDN 设置仍保留。'),
         ),
         for (final entry in const {
@@ -59,10 +83,54 @@ class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
             enabled: !saving,
             onTap: () => select(entry.key),
           ),
+        ListTile(
+          title: const Text('并发上限'),
+          subtitle: Text('${budgets.concurrencyLimit} 路；手动与 Auto 均受此上限约束'),
+          trailing: DropdownButton<int>(
+            value: budgets.concurrencyLimit,
+            items: [
+              for (final n in [4, 8, 12, 16])
+                DropdownMenuItem(value: n, child: Text('$n 路')),
+            ],
+            onChanged: saving || widget.onBudgetsChanged == null
+                ? null
+                : (n) {
+                    if (n != null)
+                      saveBudgets(
+                        AcceleratorBudgets(
+                          cacheMiB: budgets.cacheMiB,
+                          concurrencyLimit: n,
+                        ),
+                      );
+                  },
+          ),
+        ),
+        ListTile(
+          title: const Text('RAM 缓存预算'),
+          subtitle: Text('${budgets.cacheMiB} MiB 缓存 + 4 MiB 重排；非进程总内存上限'),
+          trailing: DropdownButton<int>(
+            value: budgets.cacheMiB,
+            items: [
+              for (final n in [4, 8, 16])
+                DropdownMenuItem(value: n, child: Text('$n MiB')),
+            ],
+            onChanged: saving || widget.onBudgetsChanged == null
+                ? null
+                : (n) {
+                    if (n != null)
+                      saveBudgets(
+                        AcceleratorBudgets(
+                          cacheMiB: n,
+                          concurrencyLimit: budgets.concurrencyLimit,
+                        ),
+                      );
+                  },
+          ),
+        ),
         const ListTile(
           title: Text('缓存与带宽'),
           subtitle: Text(
-            '音频直连。Multi-CDN 最多验证 2 条备用线路，强 ETag/总长度/头尾采样一致后按吞吐、TTFB 与负载分配；失败线路冷却。其他代理模式保持单 CDN。多线程每片 256 KiB，重排最多 4 MiB；仅强 ETag 资源启用并发，无强校验时回落单连接。seek 取消旧代；RAM 缓存最多 8 MiB，前后窗口各 4 MiB，不写磁盘缓存。Auto/CDN 优选仍每轮至多 2 次 256 KiB 探测，间隔至少 30 秒。',
+            '音频直连。Multi-CDN 最多验证 2 条备用线路，强 ETag/总长度/头尾采样一致后分配；失败线路冷却。其他代理模式保持单 CDN。每片 256 KiB，重排最多 4 MiB；仅可传输的强 ETag 启用并发。seek 取消旧代；缓存预算可选 4/8/16 MiB，前后窗口各 4 MiB，不写磁盘缓存。CDN 优选每轮至多 2 次 256 KiB 探测，间隔至少 30 秒。',
           ),
         ),
         ListTile(
@@ -78,8 +146,23 @@ class _StreamingAcceleratorPageState extends State<StreamingAcceleratorPage> {
   );
 }
 
-class AcceleratorDiagnosticsPage extends StatelessWidget {
+class AcceleratorDiagnosticsPage extends StatefulWidget {
   const AcceleratorDiagnosticsPage({super.key});
+  @override
+  State<AcceleratorDiagnosticsPage> createState() =>
+      _AcceleratorDiagnosticsPageState();
+}
+
+class _AcceleratorDiagnosticsPageState
+    extends State<AcceleratorDiagnosticsPage> {
+  final comparison = DiagnosticComparison();
+  Future<void> copy(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted)
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已复制脱敏诊断')));
+  }
+
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('PiliBoost Diagnostics')),
@@ -91,6 +174,44 @@ class AcceleratorDiagnosticsPage extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            Wrap(
+              spacing: 8,
+              children: [
+                TextButton(
+                  onPressed: () => copy(DiagnosticExport.encode(data)),
+                  child: const Text('复制当前诊断'),
+                ),
+                for (final enabled in [false, true])
+                  TextButton(
+                    onPressed: () {
+                      final recorded = comparison.record(
+                        data,
+                        enabled: enabled,
+                      );
+                      if (recorded) setState(() {});
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            recorded
+                                ? '已记录 ${enabled ? "ON" : "OFF"}'
+                                : '请先切换到对应模式并重新加载视频',
+                          ),
+                        ),
+                      );
+                    },
+                    child: Text('记录 ${enabled ? "ON" : "OFF"}'),
+                  ),
+                TextButton(
+                  onPressed: comparison.complete
+                      ? () => copy(comparison.encode())
+                      : null,
+                  child: const Text('复制 OFF/ON 对照'),
+                ),
+              ],
+            ),
+            Text(
+              '记录：OFF ${comparison.off == null ? "未记录" : "已记录"} / ON ${comparison.on == null ? "未记录" : "已记录"}；仅为两次手工快照，不自动认定同视频或加速收益。',
+            ),
             Text('状态：${data['state']}'),
             Text(AcceleratorEffectSummary.describe(data)),
             Text(

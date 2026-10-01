@@ -38,16 +38,20 @@ class AcceleratorConfig {
     this.maxMemoryBytes = 12 * 1024 * 1024,
     this.maxAheadBytes = 4 * 1024 * 1024,
     this.maxBehindBytes = 4 * 1024 * 1024,
+    this.concurrencyLimit = 16,
     this.ewmaFastHalfLifeSeconds = 2,
     this.ewmaSlowHalfLifeSeconds = 5,
   }) : assert(safetyFactor > 0),
        assert(switchGain > 1),
        assert(probeBytes > 0),
-       assert(maxProbesPerRound >= 2);
+       assert(maxProbesPerRound >= 2),
+       assert(concurrencyLimit >= 4 && concurrencyLimit <= 16);
 
   int get maxConcurrentRequests => parallelism;
   bool get usesProxy => mode == AcceleratorMode.rangeProxy || parallelism > 1;
-  int get parallelism => switch (mode) {
+  int get parallelism =>
+      _modeParallelism > concurrencyLimit ? concurrencyLimit : _modeParallelism;
+  int get _modeParallelism => switch (mode) {
     AcceleratorMode.multiRange4 => 4,
     AcceleratorMode.multiRange8 => 8,
     AcceleratorMode.multiRange12 => 12,
@@ -62,6 +66,7 @@ class AcceleratorConfig {
       poolLifetime;
   final int poolSampleBytes;
   final int maxMemoryBytes, maxAheadBytes, maxBehindBytes;
+  final int concurrencyLimit;
   final AcceleratorMode mode;
   final double safetyFactor, switchGain;
   final double lowBufferSeconds, recoveryBufferSeconds;
@@ -76,4 +81,38 @@ class AcceleratorConfig {
         (mode) => mode.name == value,
         orElse: () => AcceleratorMode.off,
       );
+}
+
+/// Persisted bounded choices; corrupt/older settings use existing defaults.
+class AcceleratorBudgets {
+  const AcceleratorBudgets({this.cacheMiB = 8, this.concurrencyLimit = 16})
+    : assert(cacheMiB == 4 || cacheMiB == 8 || cacheMiB == 16),
+      assert(
+        concurrencyLimit == 4 ||
+            concurrencyLimit == 8 ||
+            concurrencyLimit == 12 ||
+            concurrencyLimit == 16,
+      );
+  final int cacheMiB, concurrencyLimit;
+  static AcceleratorBudgets parse(Object? value) {
+    final map = value is Map ? value : const {};
+    final cache = map['cacheMiB'];
+    final width = map['concurrencyLimit'];
+    return AcceleratorBudgets(
+      cacheMiB: cache is int && [4, 8, 16].contains(cache) ? cache : 8,
+      concurrencyLimit: width is int && [4, 8, 12, 16].contains(width)
+          ? width
+          : 16,
+    );
+  }
+
+  Map<String, int> toJson() => {
+    'cacheMiB': cacheMiB,
+    'concurrencyLimit': concurrencyLimit,
+  };
+  AcceleratorConfig config(AcceleratorMode mode) => AcceleratorConfig(
+    mode: mode,
+    concurrencyLimit: concurrencyLimit,
+    maxMemoryBytes: (cacheMiB + 4) * 1024 * 1024,
+  );
 }

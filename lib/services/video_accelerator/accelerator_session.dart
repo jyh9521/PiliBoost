@@ -33,7 +33,10 @@ class AcceleratorSession {
     required this.tracks,
     required this.probe,
     Duration Function()? clock,
-  }) : now = clock ?? _clock.elapsedGetter;
+  }) : now = clock ?? _clock.elapsedGetter,
+       _rangePolicy = RangeConcurrencyPolicy(
+         maxConcurrency: config.parallelism < 4 ? 4 : config.parallelism,
+       );
   static final _clock = Stopwatch()..start();
   final AcceleratorConfig config;
   final List<AcceleratorTrack> tracks;
@@ -51,7 +54,7 @@ class AcceleratorSession {
   String? probingTrack;
   String switchOutcome = 'notSwitched';
   LocalStreamServer? proxy;
-  final _rangePolicy = RangeConcurrencyPolicy();
+  final RangeConcurrencyPolicy _rangePolicy;
 
   Future<void>? _startingProxy, _closing;
   final _observations = <Future<void>>{};
@@ -435,6 +438,10 @@ class AcceleratorSession {
       'proxyActiveRequests': proxy?.activeRequests ?? 0,
       'concurrency': proxy?.actualConcurrency ?? 1,
       'requestedConcurrency': config.parallelism,
+      'concurrencyLimit': config.concurrencyLimit,
+      'maxMemoryBytes': config.maxMemoryBytes,
+      'maxCacheBytes': config.maxMemoryBytes - config.maxAheadBytes,
+      'maxReorderBytes': config.maxAheadBytes,
       'parallelStatus': proxy?.parallelStatus,
       'validatorStatus': proxy?.validatorStatus,
       'cdnCapabilities': proxy?.cdnCapabilities ?? const [],

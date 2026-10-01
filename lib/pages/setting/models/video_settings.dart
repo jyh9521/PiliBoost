@@ -33,6 +33,14 @@ List<SettingsModel> get videoSettings => [
       MaterialPageRoute<void>(
         builder: (_) => StreamingAcceleratorPage(
           mode: Pref.acceleratorMode,
+          budgets: Pref.acceleratorBudgets,
+          onBudgetsChanged: (budgets) async {
+            await GStorage.setting.put(
+              SettingBoxKey.acceleratorBudgets,
+              budgets.toJson(),
+            );
+            setState();
+          },
           onChanged: (mode) async {
             await GStorage.setting.put(
               SettingBoxKey.acceleratorMode,

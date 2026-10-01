@@ -43,7 +43,7 @@ abstract final class PlaybackSourceAdapter {
     String? audioUrl,
     double? durationSeconds,
   }) {
-    final config = AcceleratorConfig(mode: Pref.acceleratorMode);
+    final config = Pref.acceleratorBudgets.config(Pref.acceleratorMode);
     // OFF returns before creating clients, subscriptions, timers or probes.
     if (config.mode == AcceleratorMode.off) return null;
     AcceleratorTrack track(

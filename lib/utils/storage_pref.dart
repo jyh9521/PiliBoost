@@ -287,6 +287,9 @@ abstract final class Pref {
   static AcceleratorMode get acceleratorMode => AcceleratorConfig.parseMode(
     _setting.get(SettingBoxKey.acceleratorMode),
   );
+  static AcceleratorBudgets get acceleratorBudgets => AcceleratorBudgets.parse(
+    _setting.get(SettingBoxKey.acceleratorBudgets),
+  );
 
   static String get banWordForRecommend =>
       _setting.get(SettingBoxKey.banWordForRecommend, defaultValue: '');
