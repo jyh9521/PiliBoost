@@ -17,6 +17,11 @@ class EntityTag {
     return weak ? 'weak' : 'strong';
   }
 
+  // Candidates stay unsupported until a server-side conditional challenge passes.
+  static bool isBareCandidate(String? value) =>
+      value != null &&
+      RegExp(r'^[A-Za-z0-9_-]{16,128}$').firstMatch(value)?.group(0) == value;
+
   static bool isStrong(String? value) => status(value) == 'strong';
 
   // dart:io outgoing header validation only accepts ASCII field values.

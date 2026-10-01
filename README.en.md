@@ -3,7 +3,7 @@
     <h1>PiliBoost</h1>
 </div>
 
-## PiliBoost · 0.1.1 diagnostics update
+## PiliBoost · 0.1.2 conditional compatibility update
 
 A [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) fork with adaptive CDN selection and bounded streaming acceleration.
 Development belongs to [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost); upstream is a reference and synchronization source.
@@ -22,10 +22,10 @@ Audio/Video Settings → **Streaming Accelerator**. Default: **OFF**. Changes ap
 | Multi-CDN Auto | Experimental pool admission using strong ETag, exact total and matching head/tail samples |
 
 Lane caps: 4/8/12/16. Cache: 4/8/16 MiB; reorder payload: at most 4 MiB. These are not process RSS limits.
-Missing or transport-incompatible strong validators stay single-connection. Errors attempt original-source recovery.
+Without a standard transportable strong validator or a verified same-URI bare-token conditional proof, playback stays single-connection. Errors attempt original-source recovery.
 No disk cache, live acceleration, parallel audio or unvalidated cross-CDN byte splicing.
 
-0.1.1 diagnostic update: copied snapshots include `cdnCapabilities → etagFormat` for quote/prefix/character-shape evidence, without ETag values. Parallel admission is unchanged.
+0.1.2 compatibility update: bare ASCII tokens require a mismatched quoted If-Match response of 412 and a matched one-byte response of 206. Only the exact URI may use this proof, never a cross-CDN pool. Diagnostics expose `bareEtagStatus` and `bareEtagParallel`, not raw tags. Nonstandard tags remain `unsupported` RFC validators.
 
 ### Verification
 
@@ -36,7 +36,7 @@ Automated tests and controlled native fixtures are validated; real CDN gains and
 
 ### Release and build
 
-Version: **0.1.1+3**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
+Version: **0.1.2+4**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
 A dedicated release key is required. Existing `com.example.piliplus.debug` test builds remain separate; data is not migrated automatically.
 Published builds belong in this fork's [Releases](https://github.com/jyh9521/PiliBoost/releases). Release preparation/build output is not stable device acceptance.
 [Build/signing](docs/accelerator/RELEASE.md) · [Budgets/export](docs/accelerator/V8SETTINGS.md) · [Validation](docs/accelerator/VALIDATION.md) · [Attribution](NOTICE).

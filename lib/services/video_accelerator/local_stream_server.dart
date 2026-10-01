@@ -42,6 +42,10 @@ class LocalStreamServer {
   final List<Uri> candidates;
   RangePoolDownloader? _pool;
   RangeCancellation? _poolToken;
+  RangeCancellation? _bareToken;
+  (Uri, String, int)? _bareKey;
+  BareEtagResult? _bareResult;
+  int _bareCheckedMs = 0;
   int _poolCreatedMs = 0;
   List<Map<String, Object?>> get poolStats => _pool?.diagnostics ?? [];
   final TransferMetrics metrics;
@@ -203,7 +207,46 @@ class LocalStreamServer {
       r.response.headers.set('cache-control', 'no-store');
       if (rangeConcurrency > 1 && r.method == 'GET') {
         final etag = response.headers.value('etag');
-        // A strong validator is required before combining separate responses.
+        if (!capability.parallelEligible &&
+            EntityTag.isBareCandidate(etag) &&
+            (capability.totalBytes ?? 0) > 0) {
+          final key = (remote, etag!, capability.totalBytes!);
+          if (_bareKey != key ||
+              _bareResult == null ||
+              _clock.elapsedMilliseconds - _bareCheckedMs >= 60000 ||
+              (_bareResult!.proof != null &&
+                  !_bareResult!.proof!.matches(
+                    remote,
+                    etag,
+                    capability.totalBytes!,
+                  ))) {
+            final token = RangeCancellation();
+            _bareToken = token;
+            try {
+              parallelStatus = 'bareProbing';
+              final result = await BareEtagVerifier.verify(
+                uri: remote,
+                etag: etag,
+                totalBytes: capability.totalBytes!,
+                headers: headers,
+                clientFactory: clientFactory,
+                token: token,
+                onBytesReceived: (n) {
+                  upstreamBytes += n;
+                  metrics.received(n);
+                },
+              );
+              if (_closed || epoch != _epoch) throw const RangeCancelled();
+              _bareKey = key;
+              _bareResult = result;
+              _bareCheckedMs = _clock.elapsedMilliseconds;
+            } finally {
+              if (identical(_bareToken, token)) _bareToken = null;
+            }
+          }
+          capability.bareResult = _bareResult;
+        }
+        // Standard strong identity or a challenged same-URI bare-token proof.
         if (capability.parallelEligible) {
           final cr = status == 206
               ? ContentRange.parse(response.headers.value('content-range')!)
@@ -227,8 +270,10 @@ class LocalStreamServer {
                 uri: remote,
                 totalBytes: total,
                 etag: etag,
+                verifiedBare: capability.bareResult?.proof,
               );
-              if (candidates.isNotEmpty) {
+              if (resource.verifiedBare != null) _pool = null;
+              if (candidates.isNotEmpty && resource.verifiedBare == null) {
                 if (_pool == null ||
                     !_pool!.matches(resource) ||
                     _clock.elapsedMilliseconds - _poolCreatedMs >
@@ -285,7 +330,9 @@ class LocalStreamServer {
               );
               _scheduler = scheduler;
               actualConcurrency = desiredConcurrency;
-              parallelStatus = _pool != null
+              parallelStatus = resource.verifiedBare != null
+                  ? 'bareEtagParallel'
+                  : _pool != null
                   ? 'validatedCdnPool'
                   : 'strongEtagParallel';
               unawaited(
@@ -421,11 +468,14 @@ class LocalStreamServer {
     _pool = null;
     cache.clear();
     _capabilities.clear();
+    _bareKey = null;
+    _bareResult = null;
     validatorStatus = 'unmeasured';
   }
 
   void cancelRequests() {
     _poolToken?.cancel();
+    _bareToken?.cancel();
     _scheduler?.invalidate();
     _epoch++;
     if (_client != null) cancellations++;

@@ -184,3 +184,5 @@ test*
 /docs/accelerator/release-local/
 
 /docs/accelerator/etag-local/
+
+/docs/accelerator/bare-etag-local/

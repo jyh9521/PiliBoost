@@ -222,19 +222,24 @@ void main() {
         final valid = ['strong', 'weak', 'malformed'].contains(mode);
         expect(response.statusCode, valid ? 206 : 502);
         expect(bytes, valid ? List.generate(10, (i) => i) : isEmpty);
-        expect(chunkRequests, (mode == 'strong') ? 1 : 0);
+        // A malformed bare candidate may issue only its negative admission probe.
+        expect(chunkRequests, ['strong', 'malformed'].contains(mode) ? 1 : 0);
         final evidence = relay.cdnCapabilities.single;
         final shape = evidence['etagFormat'] as Map;
         expect(shape['weakPrefix'], mode == 'weak');
         expect(shape['openingQuote'], mode != 'malformed');
-        expect(shape['invalidReason'], mode == 'malformed' ? 'missingOpeningQuote' : 'none');
+        expect(
+          shape['invalidReason'],
+          mode == 'malformed' ? 'missingOpeningQuote' : 'none',
+        );
         expect(
           evidence['parallelEligible'],
           (mode == 'strong'),
         );
         expect(evidence['reason'], switch (mode) {
           'strong' => 'eligible',
-          'weak' || 'malformed' => 'missingStrongValidator',
+          'weak' => 'missingStrongValidator',
+          'malformed' => 'bareConditionIgnored',
           'ignored' => 'rangeIgnored',
           'redirect' => 'http302',
           _ => 'rangeMismatch',

@@ -122,7 +122,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
     token.check();
     if (prepared) return;
     if (_preparing) throw StateError('Pool discovery already active');
-    if (primary.etag == null) {
+    if (primary.etag == null || primary.verifiedBare != null) {
       throw ArgumentError('Validated pool requires strong identity');
     }
     _preparing = true;

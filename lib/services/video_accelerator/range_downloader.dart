@@ -1,24 +1,144 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:PiliPlus/services/video_accelerator/range_protocol.dart';
 
 /// Immutable representation identity supplied by the caller, not by a client URL.
 class RangeResource {
-  RangeResource({required this.uri, required this.totalBytes, this.etag}) {
+  RangeResource({
+    required this.uri,
+    required this.totalBytes,
+    this.etag,
+    this.verifiedBare,
+  }) {
     if (!['http', 'https'].contains(uri.scheme) ||
         uri.host.isEmpty ||
         totalBytes <= 0) {
       throw ArgumentError('Invalid range resource');
     }
-    if (etag != null && !EntityTag.isTransportableStrong(etag)) {
+    if (verifiedBare != null && !verifiedBare!.matches(uri, etag, totalBytes)) {
+      throw ArgumentError('Bare proof does not match resource');
+    }
+    if (etag != null &&
+        !EntityTag.isTransportableStrong(etag) &&
+        !(verifiedBare?.matches(uri, etag, totalBytes) ?? false)) {
       throw ArgumentError('A strong ETag is required when provided');
     }
   }
   final Uri uri;
   final int totalBytes;
   final String? etag;
+  final BareEtagProof? verifiedBare;
+  String? get conditionalEtag => verifiedBare == null ? etag : '"$etag"';
+}
+
+/// Same-URI proof minted by conditional probes, not a standard strong validator.
+class BareEtagProof {
+  BareEtagProof._(this._uri, this._etag, this._total);
+  final Uri _uri;
+  final String _etag;
+  final int _total;
+  final _age = Stopwatch()..start();
+  bool matches(Uri uri, String? etag, int total) =>
+      uri == _uri &&
+      etag == _etag &&
+      total == _total &&
+      _age.elapsed < const Duration(seconds: 60);
+}
+
+class BareEtagResult {
+  const BareEtagResult(this.status, [this.proof]);
+  final String status;
+  final BareEtagProof? proof;
+}
+
+/// Two one-byte probes, total deadline, no retries, redirects or body buffering.
+abstract final class BareEtagVerifier {
+  static Future<BareEtagResult> verify({
+    required Uri uri,
+    required String etag,
+    required int totalBytes,
+    required Map<String, String> headers,
+    required HttpClient Function() clientFactory,
+    required RangeCancellation token,
+    Duration timeout = const Duration(seconds: 4),
+    void Function(int)? onBytesReceived,
+  }) async {
+    token.check();
+    if (!EntityTag.isBareCandidate(etag) ||
+        totalBytes <= 0 ||
+        !['http', 'https'].contains(uri.scheme) ||
+        uri.host.isEmpty) {
+      return const BareEtagResult('bareFormatRejected');
+    }
+    final client = clientFactory()..autoUncompress = false;
+    void close() => client.close(force: true);
+    token.attach(close);
+    var expired = false;
+    final timer = Timer(timeout, () {
+      expired = true;
+      close();
+    });
+    try {
+      Future<HttpClientResponse> probe(String condition) async {
+        final request = await client.getUrl(uri);
+        token.check();
+        request.followRedirects = false;
+        headers.forEach(request.headers.set);
+        request.headers.set('accept-encoding', 'identity');
+        request.headers.set('range', 'bytes=0-0');
+        request.headers.set('if-match', condition);
+        final response = await request.close();
+        token.check();
+        return response;
+      }
+
+      // Valid quoted negative control, guaranteed different from the candidate.
+      final nonce = List.generate(
+        16,
+        (_) => Random.secure().nextInt(256),
+      ).map((n) => n.toRadixString(16).padLeft(2, '0')).join();
+      final negative = await probe('"pili-mismatch.$nonce"');
+      if (negative.statusCode != 412) {
+        return const BareEtagResult('bareConditionIgnored');
+      }
+      await negative.detachSocket().then((socket) => socket.destroy());
+      final positive = await probe('"$etag"');
+      if (positive.statusCode != 206 ||
+          positive.contentLength != 1 ||
+          positive.headers.value('content-range') != 'bytes 0-0/$totalBytes' ||
+          positive.headers.value('etag') != etag ||
+          (positive.headers.value('content-encoding') ?? 'identity') !=
+              'identity') {
+        return const BareEtagResult('barePositiveRejected');
+      }
+      var received = 0;
+      await for (final chunk in positive) {
+        token.check();
+        onBytesReceived?.call(chunk.length);
+        received += chunk.length;
+        if (received > 1) return const BareEtagResult('barePositiveRejected');
+      }
+      token.check();
+      if (expired) return const BareEtagResult('bareProbeFailed');
+      if (received != 1) return const BareEtagResult('barePositiveRejected');
+      return BareEtagResult(
+        'bareConditionalVerified',
+        BareEtagProof._(uri, etag, totalBytes),
+      );
+    } on RangeCancelled {
+      rethrow;
+    } catch (_) {
+      token.check();
+      return const BareEtagResult('bareProbeFailed');
+    } finally {
+      timer.cancel();
+      token.detach(close);
+      close();
+    }
+  }
 }
 
 class RangeCancelled implements Exception {
@@ -159,7 +279,7 @@ class RangeDownloader {
       request.headers.set('accept-encoding', 'identity');
       request.headers.set('range', 'bytes=$start-$end');
       if (resource.etag != null) {
-        request.headers.set('if-match', resource.etag!);
+        request.headers.set('if-match', resource.conditionalEtag!);
       }
       final response = await request.close();
       token.check();

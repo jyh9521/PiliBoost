@@ -1,4 +1,5 @@
 import 'package:PiliPlus/services/video_accelerator/range_protocol.dart';
+import 'package:PiliPlus/services/video_accelerator/range_downloader.dart';
 
 /// Evidence from one demand response's headers, not a whole-file identity proof.
 /// Values are enums/numbers only; validators and signed URLs stay private.
@@ -59,6 +60,7 @@ class CdnCapability {
   final String validatorStatus;
   final bool validatorTransportable;
   final Map<String, Object?> etagFormat;
+  BareEtagResult? bareResult;
   String rangeStatus = 'unmeasured';
   int? totalBytes;
   bool identityEncoding = false;
@@ -67,12 +69,13 @@ class CdnCapability {
       failureReason == null &&
       statusCode != 416 &&
       (totalBytes ?? 0) > 0 &&
-      validatorTransportable;
+      (validatorTransportable || bareResult?.proof != null);
   Map<String, Object?> toJson() => {
     'statusCode': statusCode,
     'rangeStatus': rangeStatus,
     'validatorStatus': validatorStatus,
     'validatorTransportable': validatorTransportable,
+    'bareEtagStatus': bareResult?.status ?? 'notAttempted',
     'etagFormat': etagFormat,
     'identityEncoding': identityEncoding,
     'totalBytes': totalBytes,
@@ -83,6 +86,8 @@ class CdnCapability {
             ? 'unsatisfiedRange'
             : parallelEligible
             ? 'eligible'
+            : bareResult != null
+            ? bareResult!.status
             : validatorStatus == 'strong' && !validatorTransportable
             ? 'validatorTransportUnsupported'
             : 'missingStrongValidator'),
