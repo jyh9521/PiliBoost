@@ -42,6 +42,12 @@ class TransferMetrics {
         : buckets.values.fold<int>(0, (a, b) => a + b) * 8e6 / micros;
   }
 
+  void resetWindow() {
+    _upstream.clear();
+    _fresh.clear();
+    _cached.clear();
+  }
+
   double get upstreamBps => _rate(_upstream);
   double get freshForwardedBps => _rate(_fresh);
   double get cachedForwardedBps => _rate(_cached);

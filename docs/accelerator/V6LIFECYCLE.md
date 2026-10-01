@@ -1,0 +1,11 @@
+# V6 生命周期与播放源所有权
+
+本轮新增可等待、幂等的会话close，保留同步dispose入口。dispose立即设置disposed、取消工作与清空回调；close等待已有proxy启动、服务器请求、并发窗口和已登记的策略观察完成。关闭期间不会开启新的proxy；LocalStreamServer的close也等待pending bind与全部handler结束。
+
+播放器setDataSource新增小型SourceTransitionQueue：按调用顺序串行所有权，被更晚调用替代的排队加载直接跳过；实际换源之前等待旧AcceleratorBinding.close，旧session清理完成后再打开新播放器源。退出会invalidate排队ticket，初始化后的过期加载清理其播放器且不建立binding，finally无论成功失败都释放ticket。该队列只是源切换顺序控制，不改变OFF模式的媒体源/CDN逻辑，不增加流量。
+
+Binding.close立即停止timer，await网络subscription取消及session关闭；事件回调有关闭闸门。网络快照按ConnectivityResult集合规范化，首次快照作为基线，重复/顺序变化不触发invalidate，真实类型集合变化与stream错误触发取消、清pool/cache。它不识别同类型WiFi网络的IP/AP变化，也不等于实际设备已完成无缝恢复。
+
+seek或网络invalidate重置Auto到4路及低缓冲确认时间，清空约3秒计量窗口和旧aggregate估计，保留累计字节统计；手动4/8/12/16上限不被改写。seek保留正确资源的有界缓存，网络变化清缓存/线路状态。由此新位置不会继承旧位置的测速峰值或16路状态。
+
+新增11项测试：pending bind关闭、latest queued source所有权与退出失效、startup单飞、幂等close、关闭等待策略Future、network去重/错误/取消subscription、timer停止、Auto/计量重置及真实localhost在途handler排空。队列测试验证服务机制与静态controller接入；Windows native EDL回归继续运行，真实Android连续切画质、后台/PiP/长播/网络恢复仍待最终统一验收。没有在本轮对手机安装或清数据。

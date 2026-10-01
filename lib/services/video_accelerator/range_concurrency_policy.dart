@@ -9,6 +9,11 @@ class RangeConcurrencyPolicy {
   final Duration interval;
   int concurrency = 4;
   Duration? _lastChange, _lowSince;
+  void reset() {
+    concurrency = 4;
+    _lastChange = _lowSince = null;
+  }
+
   void observe({
     required Duration now,
     required double bufferSeconds,

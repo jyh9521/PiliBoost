@@ -53,7 +53,14 @@ class AcceleratorSession {
   LocalStreamServer? proxy;
   final _rangePolicy = RangeConcurrencyPolicy();
 
+  Future<void>? _startingProxy, _closing;
+  final _observations = <Future<void>>{};
+
   Future<void> startProxy({
+    required LocalStreamServer Function(Uri Function(), void Function()) create,
+  }) => _startingProxy ??= _startProxy(create: create);
+
+  Future<void> _startProxy({
     required LocalStreamServer Function(Uri Function(), void Function()) create,
   }) async {
     if (!config.usesProxy || !enabled) return;
@@ -97,6 +104,13 @@ class AcceleratorSession {
     generation++;
     _cancellation?.cancel();
     proxy?.cancelRequests();
+    proxy?.metrics.resetWindow();
+    aggregateBps = 0;
+    _rangePolicy.reset();
+    if (config.mode == AcceleratorMode.rangeAuto ||
+        config.mode == AcceleratorMode.multiCdn) {
+      proxy?.desiredConcurrency = 4;
+    }
     _lowSince = null;
     _quietUntil = now() + config.minimumLowDuration;
     if (networkChanged) {
@@ -109,6 +123,23 @@ class AcceleratorSession {
   }
 
   Future<void> observe({
+    required double bufferAheadSeconds,
+    required double throughputBps,
+    required bool playing,
+    double speed = 1,
+  }) {
+    late final Future<void> job;
+    job = _observe(
+      bufferAheadSeconds: bufferAheadSeconds,
+      throughputBps: throughputBps,
+      playing: playing,
+      speed: speed,
+    ).whenComplete(() => _observations.remove(job));
+    _observations.add(job);
+    return job;
+  }
+
+  Future<void> _observe({
     required double bufferAheadSeconds,
     required double throughputBps,
     required bool playing,
@@ -454,13 +485,23 @@ class AcceleratorSession {
   }
 
   void dispose() {
+    unawaited(close());
+  }
+
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     disposed = true;
     invalidate();
     final server = proxy;
     proxy = null;
-    if (server != null) unawaited(server.close());
     onSwitch = null;
     onRefreshRequired = null;
+    await Future.wait<void>([
+      if (server != null) server.close(),
+      ?_startingProxy,
+      ..._observations,
+    ]);
   }
 }
 

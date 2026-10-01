@@ -102,9 +102,14 @@ abstract final class PlaybackSourceAdapter {
 
 /// Owned by the player, not a video page: PiP/background can outlive the page.
 class AcceleratorBinding {
-  AcceleratorBinding(this.session, this.observe) {
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!session.enabled) return;
+  AcceleratorBinding(
+    this.session,
+    this.observe, {
+    Stream<List<ConnectivityResult>>? networkChanges,
+    Duration observationInterval = const Duration(seconds: 1),
+  }) {
+    _timer = Timer.periodic(observationInterval, (_) {
+      if (_closed || !session.enabled) return;
       try {
         observe();
         session.publish();
@@ -112,20 +117,38 @@ class AcceleratorBinding {
         unawaited(session.restoreOriginal());
       }
     });
-    _network = Connectivity().onConnectivityChanged
-        .skip(1)
-        .listen(
-          (_) => session.invalidate(networkChanged: true),
-          onError: (Object _) => session.invalidate(networkChanged: true),
-        );
+    _network = (networkChanges ?? Connectivity().onConnectivityChanged).listen(
+      (values) {
+        if (_closed) return;
+        final next = values.map((v) => v.name).toSet().toList()..sort();
+        final key = next.join(',');
+        final previous = _networkKey;
+        _networkKey = key;
+        // The first snapshot establishes a baseline; repeats/order changes are not transitions.
+        if (previous != null && previous != key) {
+          session.invalidate(networkChanged: true);
+        }
+      },
+      onError: (Object _) {
+        if (!_closed) session.invalidate(networkChanged: true);
+      },
+    );
   }
   final AcceleratorSession session;
   final void Function() observe;
   late final Timer _timer;
   late final StreamSubscription<List<ConnectivityResult>> _network;
+  bool _closed = false;
+  String? _networkKey;
+  Future<void>? _closing;
   void dispose() {
+    unawaited(close());
+  }
+
+  Future<void> close() => _closing ??= _close();
+  Future<void> _close() async {
+    _closed = true;
     _timer.cancel();
-    unawaited(_network.cancel());
-    session.dispose();
+    await Future.wait<void>([_network.cancel(), session.close()]);
   }
 }

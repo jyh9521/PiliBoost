@@ -62,6 +62,8 @@ class LocalStreamServer {
   Map<String, int> get poolRejectionReasons =>
       _pool?.rejectionReasons ?? const {};
   final void Function()? onFailure;
+  final _handlers = <Future<void>>{};
+  int get pendingHandlers => _handlers.length;
   HttpServer? _server;
   HttpClient? _client;
   final _clock = Stopwatch()..start();
@@ -73,12 +75,17 @@ class LocalStreamServer {
   int activeRequests = 0, requests = 0, cancellations = 0;
   String? lastFailureReason;
   bool _closed = false;
-  Future<void>? _closing;
+  Future<void>? _closing, _starting;
   Uri get uri => Uri.parse('http://127.0.0.1:${_server!.port}/$_token/video');
 
   double get throughputBps => metrics.outputBps;
 
-  Future<void> start() async {
+  Future<void> start() {
+    if (_closed) return Future.error(StateError('Closed relay'));
+    return _starting ??= _start();
+  }
+
+  Future<void> _start() async {
     if (_closed) throw StateError('Closed relay');
     if (_server != null) return;
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -86,7 +93,11 @@ class LocalStreamServer {
       await _server!.close(force: true);
       return;
     }
-    _server!.listen((request) => unawaited(_handle(request)));
+    _server!.listen((request) {
+      late final Future<void> job;
+      job = _handle(request).whenComplete(() => _handlers.remove(job));
+      _handlers.add(job);
+    });
   }
 
   Future<void> _empty(HttpRequest r, int status) async {
@@ -424,7 +435,13 @@ class LocalStreamServer {
   Future<void> _close() async {
     _closed = true;
     cancelRequests();
+    try {
+      await _starting;
+    } catch (_) {
+      // The start caller owns bind failures; closing still releases resources.
+    }
     await _server?.close(force: true);
+    await Future.wait(_handlers.toList());
     await _parallelDrain;
     cache.clear();
     _pool = null;

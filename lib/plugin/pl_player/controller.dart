@@ -1,3 +1,4 @@
+import 'package:PiliPlus/services/video_accelerator/source_transition_queue.dart';
 import 'package:PiliPlus/services/video_accelerator/range_memory_cache.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
 
@@ -154,6 +155,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
 
   late DataSource dataSource;
   // PiliBoost Accelerator integration point; final player disposal owns lease.
+  final _acceleratorLoads = SourceTransitionQueue();
   AcceleratorBinding? _acceleratorBinding;
   bool _acceleratorSwitching = false;
   bool _acceleratorRecoveryPending = false;
@@ -617,11 +619,19 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     Volume? volume,
     bool autoFullScreenFlag = false,
   }) async {
+    final load = _acceleratorLoads.enqueue();
+    await load.ready;
     try {
-      _acceleratorBinding?.dispose();
+      if (!load.isCurrent) {
+        await accelerator?.close();
+        return;
+      }
+      final previousAccelerator = _acceleratorBinding;
       _acceleratorBinding = null;
       _acceleratorRecoveryPending = false;
       _processing = true;
+      await previousAccelerator?.close();
+      if (!load.isCurrent) return;
       this.isLive = isLive;
       _videoType = videoType ?? VideoType.ugc;
       this.width = width;
@@ -713,9 +723,9 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         await _createVideoController(dataSource, seekTo, volume);
       }
 
-      if (_playerCount == 0) {
+      if (_playerCount == 0 || !load.isCurrent) {
         _removeListeners();
-        _videoPlayerController?.dispose();
+        await _videoPlayerController?.dispose();
         _videoPlayerController = null;
         _videoController = null;
         return;
@@ -731,6 +741,13 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       }
 
       await _initializePlayer();
+      if (_playerCount == 0 || !load.isCurrent) {
+        _removeListeners();
+        await _videoPlayerController?.dispose();
+        _videoPlayerController = null;
+        _videoController = null;
+        return;
+      }
       if (accelerator != null && !isLive && dataSource is NetworkSource) {
         accelerator.onSwitch = (video, audio) =>
             _switchAcceleratorSource(accelerator, video, audio);
@@ -766,8 +783,12 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
       }
     } finally {
       _processing = false;
-      if (!identical(_acceleratorBinding?.session, accelerator)) {
-        accelerator?.dispose();
+      try {
+        if (!identical(_acceleratorBinding?.session, accelerator)) {
+          await accelerator?.close();
+        }
+      } finally {
+        load.finish();
       }
     }
   }
@@ -1747,6 +1768,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     }
 
     _playerCount = 0;
+    _acceleratorLoads.invalidate();
     _acceleratorBinding?.dispose();
     _acceleratorBinding = null;
     if (removeSafeArea) {
