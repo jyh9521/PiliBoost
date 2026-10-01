@@ -186,3 +186,5 @@ test*
 /docs/accelerator/etag-local/
 
 /docs/accelerator/bare-etag-local/
+
+/docs/accelerator/raw-condition-local/

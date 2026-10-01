@@ -31,12 +31,16 @@ class RangeResource {
   final int totalBytes;
   final String? etag;
   final BareEtagProof? verifiedBare;
-  String? get conditionalEtag => verifiedBare == null ? etag : '"$etag"';
+  String? get conditionalEtag =>
+      verifiedBare == null || verifiedBare!.conditionFormat == 'raw'
+      ? etag
+      : '"$etag"';
 }
 
 /// Same-URI proof minted by conditional probes, not a standard strong validator.
 class BareEtagProof {
-  BareEtagProof._(this._uri, this._etag, this._total);
+  BareEtagProof._(this._uri, this._etag, this._total, this.conditionFormat);
+  final String conditionFormat;
   final Uri _uri;
   final String _etag;
   final int _total;
@@ -49,12 +53,13 @@ class BareEtagProof {
 }
 
 class BareEtagResult {
-  const BareEtagResult(this.status, [this.proof]);
+  const BareEtagResult(this.status, [this.proof, this.evidence = const {}]);
+  final Map<String, Object?> evidence;
   final String status;
   final BareEtagProof? proof;
 }
 
-/// Two one-byte probes, total deadline, no retries, redirects or body buffering.
+/// At most four one-byte probes; one deadline, no redirects or unbounded bodies.
 abstract final class BareEtagVerifier {
   static Future<BareEtagResult> verify({
     required Uri uri,
@@ -77,6 +82,9 @@ abstract final class BareEtagVerifier {
     void close() => client.close(force: true);
     token.attach(close);
     var expired = false;
+    final evidence = <String, Object?>{'conditionFormat': 'quoted'};
+    BareEtagResult result(String status, [BareEtagProof? proof]) =>
+        BareEtagResult(status, proof, Map.unmodifiable(evidence));
     final timer = Timer(timeout, () {
       expired = true;
       close();
@@ -95,44 +103,91 @@ abstract final class BareEtagVerifier {
         return response;
       }
 
-      // Valid quoted negative control, guaranteed different from the candidate.
+      Future<void> abandon(HttpClientResponse response) async {
+        await response.detachSocket().then((socket) => socket.destroy());
+      }
+
+      String? metadataFailure(HttpClientResponse response) {
+        if (response.statusCode != 206) return 'unexpectedStatus';
+        if (response.contentLength != 1) return 'lengthMismatch';
+        if (response.headers.value('content-range') !=
+            'bytes 0-0/$totalBytes') {
+          return 'rangeMismatch';
+        }
+        if (response.headers.value('etag') != etag) return 'etagIdentity';
+        if ((response.headers.value('content-encoding') ?? 'identity') !=
+            'identity') {
+          return 'encodedContent';
+        }
+        return null;
+      }
+
+      // Quoted form follows RFC syntax. Only an explicit 412 enables a raw trial.
       final nonce = List.generate(
         16,
         (_) => Random.secure().nextInt(256),
       ).map((n) => n.toRadixString(16).padLeft(2, '0')).join();
       final negative = await probe('"pili-mismatch.$nonce"');
-      if (negative.statusCode != 412) {
-        return const BareEtagResult('bareConditionIgnored');
+      evidence['quotedNegativeStatusCode'] = negative.statusCode;
+      if (negative.statusCode != 412) return result('bareConditionIgnored');
+      await abandon(negative);
+      var positive = await probe('"$etag"');
+      evidence['quotedPositiveStatusCode'] = positive.statusCode;
+      if (positive.statusCode == 412) {
+        await abandon(positive);
+        evidence['conditionFormat'] = 'raw';
+        // Same token shape, guaranteed different value. Both raw controls must pass.
+        final first = etag[0];
+        final wrongFirst = RegExp(r'[0-9]').hasMatch(first)
+            ? (first == '0' ? '1' : '0')
+            : RegExp(r'[A-Z]').hasMatch(first)
+            ? (first == 'A' ? 'B' : 'A')
+            : (first == 'a' ? 'b' : 'a');
+        final rawNegative = await probe(wrongFirst + etag.substring(1));
+        evidence['rawNegativeStatusCode'] = rawNegative.statusCode;
+        if (rawNegative.statusCode != 412) {
+          return result('bareConditionIgnored');
+        }
+        await abandon(rawNegative);
+        positive = await probe(etag);
+        evidence['rawPositiveStatusCode'] = positive.statusCode;
       }
-      await negative.detachSocket().then((socket) => socket.destroy());
-      final positive = await probe('"$etag"');
-      if (positive.statusCode != 206 ||
-          positive.contentLength != 1 ||
-          positive.headers.value('content-range') != 'bytes 0-0/$totalBytes' ||
-          positive.headers.value('etag') != etag ||
-          (positive.headers.value('content-encoding') ?? 'identity') !=
-              'identity') {
-        return const BareEtagResult('barePositiveRejected');
+      final failure = metadataFailure(positive);
+      if (failure != null) {
+        evidence['positiveFailureReason'] = failure;
+        return result('barePositiveRejected');
       }
       var received = 0;
       await for (final chunk in positive) {
         token.check();
         onBytesReceived?.call(chunk.length);
         received += chunk.length;
-        if (received > 1) return const BareEtagResult('barePositiveRejected');
+        if (received > 1) {
+          evidence['positiveFailureReason'] = 'oversizedBody';
+          return result('barePositiveRejected');
+        }
       }
       token.check();
-      if (expired) return const BareEtagResult('bareProbeFailed');
-      if (received != 1) return const BareEtagResult('barePositiveRejected');
-      return BareEtagResult(
+      if (expired) return result('bareProbeFailed');
+      if (received != 1) {
+        evidence['positiveFailureReason'] = 'truncatedBody';
+        return result('barePositiveRejected');
+      }
+      return result(
         'bareConditionalVerified',
-        BareEtagProof._(uri, etag, totalBytes),
+        BareEtagProof._(
+          uri,
+          etag,
+          totalBytes,
+          evidence['conditionFormat']! as String,
+        ),
       );
     } on RangeCancelled {
       rethrow;
     } catch (_) {
       token.check();
-      return const BareEtagResult('bareProbeFailed');
+      evidence['positiveFailureReason'] = expired ? 'deadline' : 'transport';
+      return result('bareProbeFailed');
     } finally {
       timer.cancel();
       token.detach(close);

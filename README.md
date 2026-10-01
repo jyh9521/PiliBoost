@@ -3,7 +3,7 @@
     <img width="200" height="200" src="assets/images/logo/logo.png">
 </div>
 
-## PiliBoost · 0.1.2 条件校验兼容更新
+## PiliBoost · 0.1.3 条件校验兼容更新
 
 基于 [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) 的自适应 CDN 与有界流媒体加速客户端。
 主仓库为 [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost)，上游仅作为架构参考与同步来源。
@@ -25,7 +25,7 @@
 标准强 ETag 直接使用；无引号 ASCII 标签须先通过错误条件 412 与正确条件 206 的双探测，之后仅允许同源并发。未通过时保持单连接；失败尝试原源恢复。缓存不写磁盘，预算不是进程总内存上限。
 直播、音频并发以及任意 CDN 的无校验拼接不在当前实现中。
 
-0.1.2 条件校验兼容更新：诊断保留 `etagFormat`，新增 `bareEtagStatus`；通过后显示 `bareEtagParallel`。不输出 ETag 内容，不将非标准标签标成 strong，不开放跨 CDN 拼接。
+0.1.3 条件校验兼容更新：引号条件返回 412 时追加原样标签的正反探测；诊断增加 `conditionalProbe` 的状态码与具体失败原因。诊断保留 `etagFormat`，新增 `bareEtagStatus`；通过后显示 `bareEtagParallel`。不输出 ETag 内容，不将非标准标签标成 strong，不开放跨 CDN 拼接。
 
 ### 如何验证
 
@@ -36,7 +36,7 @@
 
 ### 发布与构建
 
-当前版本为 **0.1.2+4**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
+当前版本为 **0.1.3+5**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
 release 使用独立发布密钥；此前 `com.example.piliplus.debug` 测试包独立保留，数据不会自动迁移。
 从本仓库 [Releases](https://github.com/jyh9521/PiliBoost/releases) 获取已发布构建；本轮处于发布准备阶段，不把 release 构建等同于稳定版验收。
 [构建与签名说明](docs/accelerator/RELEASE.md) · [V8 设置与导出](docs/accelerator/V8SETTINGS.md) · [验证说明](docs/accelerator/VALIDATION.md) · [算法署名](NOTICE)。

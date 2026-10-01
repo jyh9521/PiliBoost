@@ -49,6 +49,10 @@ abstract final class DiagnosticExport {
     'cooldownMs',
     'active',
     'statusCode',
+    'quotedNegativeStatusCode',
+    'quotedPositiveStatusCode',
+    'rawNegativeStatusCode',
+    'rawPositiveStatusCode',
     'totalBytes',
     'length',
     'quoteCount',
@@ -82,6 +86,8 @@ abstract final class DiagnosticExport {
     'parallelStatus',
     'validatorStatus',
     'bareEtagStatus',
+    'conditionFormat',
+    'positiveFailureReason',
     'rangeStatus',
     'reason',
     'proxyFailureReason',
@@ -134,6 +140,11 @@ abstract final class DiagnosticExport {
     'barePositiveRejected',
     'bareProbeFailed',
     'bareProofExpired',
+    'quoted',
+    'raw',
+    'unexpectedStatus',
+    'lengthMismatch',
+    'transport',
     'validatedCdnPool',
     'rangeIgnored',
     'rangeMismatch',
@@ -221,8 +232,9 @@ abstract final class DiagnosticExport {
             .whereType<Map>()
             .map(sanitize)
             .toList();
-      } else if (key == 'etagFormat' && value is Map) {
-        out['etagFormat'] = sanitize(value);
+      } else if ((key == 'etagFormat' || key == 'conditionalProbe') &&
+          value is Map) {
+        out[key] = sanitize(value);
       } else if (key == 'poolRejectionReasons' && value is Map) {
         out['poolRejectionReasons'] = {
           for (final e in value.entries)

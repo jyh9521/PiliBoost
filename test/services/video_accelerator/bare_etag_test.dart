@@ -63,9 +63,16 @@ void main() {
           if (mode == 'hang' && negative) {
             await Future<void>.delayed(const Duration(milliseconds: 250));
           }
+          final rawMode = mode.startsWith('raw');
+          final accepted = condition == (rawMode ? tag : '"$tag"');
+          final ignoreRaw =
+              mode == 'rawIgnored' &&
+              condition != null &&
+              !condition.startsWith('"');
           if (condition != null &&
               mode != 'ignored' &&
-              (condition != '"$tag"' || mode == 'reject')) {
+              !ignoreRaw &&
+              (!accepted || mode == 'reject')) {
             r.response.statusCode = mode == 'redirect' ? 302 : 412;
             r.response.contentLength = 0;
             await r.response.close();
@@ -80,11 +87,11 @@ void main() {
           r.response.contentLength = b - a + 1;
           r.response.headers.set(
             'content-range',
-            'bytes $a-$b/${mode == 'lengthChanged' && condition != null ? bytes.length + 1 : bytes.length}',
+            'bytes $a-$b/${['lengthChanged', 'rawLengthChanged'].contains(mode) && condition != null ? bytes.length + 1 : bytes.length}',
           );
           r.response.headers.set(
             'etag',
-            mode == 'tagChanged' && condition != null
+            ['tagChanged', 'rawTagChanged'].contains(mode) && condition != null
                 ? 'fedcba9876543210fedcba9876543210'
                 : tag,
           );
@@ -206,6 +213,103 @@ void main() {
       });
     }
     test(
+      'raw-only origin rejects wrong raw tag before admitting exact token',
+      () async {
+        mode = 'raw';
+        final result = await verify();
+        expect(result.status, 'bareConditionalVerified');
+        expect(result.evidence, {
+          'conditionFormat': 'raw',
+          'quotedNegativeStatusCode': 412,
+          'quotedPositiveStatusCode': 412,
+          'rawNegativeStatusCode': 412,
+          'rawPositiveStatusCode': 206,
+        });
+        expect(conditions.length, 4);
+        final resource = RangeResource(
+          uri: uri,
+          totalBytes: bytes.length,
+          etag: tag,
+          verifiedBare: result.proof,
+        );
+        expect(resource.conditionalEtag, tag);
+        final downloader = RangeDownloader(
+          headers: const {},
+          clientFactory: HttpClient.new,
+        );
+        expect(
+          (await downloader.fetch(
+            resource,
+            100,
+            199,
+            RangeCancellation(),
+          )).bytes,
+          bytes.sublist(100, 200),
+        );
+        expect(conditions.last, tag);
+        mode = 'rawTagChanged';
+        await expectLater(
+          downloader.fetch(resource, 200, 299, RangeCancellation()),
+          throwsA(
+            isA<RangeTransferException>().having(
+              (e) => e.reason,
+              'reason',
+              'etagIdentity',
+            ),
+          ),
+        );
+      },
+    );
+    for (final scenario in [
+      ('rawIgnored', 'bareConditionIgnored', null),
+      ('rawTagChanged', 'barePositiveRejected', 'etagIdentity'),
+      ('rawLengthChanged', 'barePositiveRejected', 'rangeMismatch'),
+    ]) {
+      test('${scenario.$1} raw trial cannot bypass checks', () async {
+        mode = scenario.$1;
+        final result = await verify();
+        expect(result.status, scenario.$2);
+        expect(result.proof, isNull);
+        expect(result.evidence['conditionFormat'], 'raw');
+        expect(result.evidence['positiveFailureReason'], scenario.$3);
+        expect(conditions.length, scenario.$1 == 'rawIgnored' ? 3 : 4);
+      });
+    }
+    test(
+      'quoted metadata failure records exact category without raw trial',
+      () async {
+        mode = 'tagChanged';
+        final result = await verify();
+        expect(result.evidence['quotedNegativeStatusCode'], 412);
+        expect(result.evidence['quotedPositiveStatusCode'], 206);
+        expect(result.evidence['positiveFailureReason'], 'etagIdentity');
+        expect(result.evidence['conditionFormat'], 'quoted');
+        expect(conditions.length, 2);
+      },
+    );
+    test('conditional probe export retains only codes and labels', () async {
+      mode = 'raw';
+      final result = await verify();
+      final text = DiagnosticExport.encode({
+        'cdnCapabilities': [
+          {
+            'conditionalProbe': {
+              ...result.evidence,
+              'ifMatch': tag,
+              'etag': tag,
+              'url': uri.toString(),
+            },
+          },
+        ],
+      });
+      final decoded = jsonDecode(
+        text,
+      )['snapshot']['cdnCapabilities'][0]['conditionalProbe'];
+      expect(decoded, result.evidence);
+      expect(text, isNot(contains(tag)));
+      expect(text, isNot(contains('sign=private')));
+    });
+    test(
       'global deadline and explicit cancellation close probe sockets',
       () async {
         mode = 'hang';
@@ -234,7 +338,7 @@ void main() {
       );
       await expectLater(pool.prepare(RangeCancellation()), throwsArgumentError);
     });
-    for (final scenario in ['verified', 'ignored']) {
+    for (final scenario in ['verified', 'ignored', 'raw']) {
       test(
         'relay $scenario returns exact ordered bytes and diagnostic status',
         () async {
@@ -260,13 +364,13 @@ void main() {
             expect(await read(), bytes);
             expect(
               relay.parallelStatus,
-              scenario == 'verified'
+              scenario != 'ignored'
                   ? 'bareEtagParallel'
                   : 'bareConditionIgnored',
             );
             expect(
               relay.observedConcurrency,
-              scenario == 'verified' ? greaterThan(1) : 1,
+              scenario != 'ignored' ? greaterThan(1) : 1,
             );
             expect(relay.poolStats, isEmpty);
             final output = DiagnosticExport.encode({
@@ -276,7 +380,7 @@ void main() {
             expect(
               output,
               contains(
-                scenario == 'verified'
+                scenario != 'ignored'
                     ? 'bareConditionalVerified'
                     : 'bareConditionIgnored',
               ),

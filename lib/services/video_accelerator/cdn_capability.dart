@@ -76,6 +76,7 @@ class CdnCapability {
     'validatorStatus': validatorStatus,
     'validatorTransportable': validatorTransportable,
     'bareEtagStatus': bareResult?.status ?? 'notAttempted',
+    'conditionalProbe': bareResult?.evidence ?? const <String, Object?>{},
     'etagFormat': etagFormat,
     'identityEncoding': identityEncoding,
     'totalBytes': totalBytes,
