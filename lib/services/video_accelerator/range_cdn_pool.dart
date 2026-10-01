@@ -11,7 +11,7 @@ class RangePoolLane {
   double fastBps = 0, slowBps = 0, ttfbMs = 0;
   int active = 0, successes = 0, failures = 0, timeouts = 0;
   Duration cooldownUntil = Duration.zero;
-  bool excluded = false;
+  bool excluded = false, needsRecovery = false;
   double score(int bytes) =>
       (active + 1) *
       (bytes * 8 / max(1, min(fastBps, slowBps)) + ttfbMs / 1000);
@@ -31,6 +31,7 @@ class RangePoolLane {
     'successes': successes,
     'errors': failures,
     'excluded': excluded,
+    'recoveryProbePending': needsRecovery,
     'timeouts': timeouts,
     'rttMs': null,
   };
@@ -50,13 +51,25 @@ class RangePoolDownloader extends CachedRangeDownloader {
     this.probeTimeout = const Duration(seconds: 4),
     this.prepareTimeout = const Duration(seconds: 8),
     this.cooldown = const Duration(seconds: 30),
-  });
+    Duration Function()? now,
+  }) {
+    if (sampleBytes <= 0 ||
+        sampleBytes > maxChunkBytes ||
+        probeTimeout <= Duration.zero ||
+        prepareTimeout <= Duration.zero ||
+        cooldown < Duration.zero) {
+      throw ArgumentError('Invalid pool recovery budget');
+    }
+    _now = now ?? (() => _clock.elapsed);
+  }
   final int sampleBytes;
   final Duration probeTimeout, prepareTimeout, cooldown;
   final RangeResource primary;
   final List<Uri> candidates;
   final lanes = <RangePoolLane>[];
   final _clock = Stopwatch()..start();
+  late final Duration Function() _now;
+  bool _preparing = false;
   int rejectedCandidates = 0, failovers = 0;
   final rejectionReasons = <String, int>{};
   void _reject(String reason) {
@@ -70,9 +83,14 @@ class RangePoolDownloader extends CachedRangeDownloader {
           ...l.diagnostics,
           'cooldownMs': max(
             0,
-            (l.cooldownUntil - _clock.elapsed).inMilliseconds,
+            (l.cooldownUntil - _now()).inMilliseconds,
           ),
-          'weight': l.excluded || l.cooldownUntil > _clock.elapsed
+          'recoveryState': l.excluded
+              ? 'excluded'
+              : l.needsRecovery
+              ? (l.cooldownUntil > _now() ? 'cooling' : 'halfOpen')
+              : 'ready',
+          'weight': l.excluded || l.cooldownUntil > _now()
               ? 0.0
               : 1 / l.score(256 * 1024),
         },
@@ -101,11 +119,21 @@ class RangePoolDownloader extends CachedRangeDownloader {
     ),
   );
   Future<void> prepare(RangeCancellation token) async {
+    token.check();
     if (prepared) return;
+    if (_preparing) throw StateError('Pool discovery already active');
     if (primary.etag == null) {
       throw ArgumentError('Validated pool requires strong identity');
     }
-    final timer = Timer(prepareTimeout, token.cancel);
+    _preparing = true;
+    final validation = RangeCancellation();
+    void cancelValidation() => validation.cancel();
+    token.attach(cancelValidation);
+    var budgetExpired = false;
+    final timer = Timer(prepareTimeout, () {
+      budgetExpired = true;
+      validation.cancel();
+    });
     try {
       final first = lane(primary);
       lanes.add(first);
@@ -113,7 +141,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
       final tailStart = max(0, primary.totalBytes - sampleBytes);
       Future<RangeChunk> anchor(RangePoolLane l, int a, int b) async {
         try {
-          final c = await l.downloader.fetch(l.resource, a, b, token);
+          final c = await l.downloader.fetch(l.resource, a, b, validation);
           l.sample(c);
           return c;
         } finally {
@@ -139,13 +167,13 @@ class RangePoolDownloader extends CachedRangeDownloader {
             next.resource,
             0,
             headEnd,
-            token,
+            validation,
           );
           final t = await next.downloader.fetch(
             next.resource,
             tailStart,
             primary.totalBytes - 1,
-            token,
+            validation,
           );
           if (!_equal(head.bytes, h.bytes) || !_equal(tail.bytes, t.bytes)) {
             _reject('anchorMismatch');
@@ -156,6 +184,12 @@ class RangePoolDownloader extends CachedRangeDownloader {
             ..sample(t);
           lanes.add(next);
         } on RangeCancelled {
+          // Explicit seek/close cancellation takes precedence over optional budget.
+          token.check();
+          if (budgetExpired) {
+            _reject('validationBudget');
+            break;
+          }
           rethrow;
         } on RangeTransferException catch (error) {
           _reject(error.reason);
@@ -172,6 +206,17 @@ class RangePoolDownloader extends CachedRangeDownloader {
       prepared = true;
     } finally {
       timer.cancel();
+      token.detach(cancelValidation);
+      validation.cancel();
+      _preparing = false;
+      if (!prepared) {
+        _rejectedProbeBytes += lanes.fold<int>(
+          0,
+          (sum, l) => sum + l.downloader.upstreamBytes,
+        );
+        lanes.clear();
+        _syncBytes();
+      }
     }
   }
 
@@ -202,7 +247,8 @@ class RangePoolDownloader extends CachedRangeDownloader {
                 (l) =>
                     !l.excluded &&
                     !tried.contains(l) &&
-                    l.cooldownUntil <= _clock.elapsed,
+                    l.cooldownUntil <= _now() &&
+                    (!l.needsRecovery || l.active == 0),
               )
               .toList()
             ..sort(
@@ -228,12 +274,15 @@ class RangePoolDownloader extends CachedRangeDownloader {
           end,
           token,
         );
-        selected.sample(c);
+        selected
+          ..sample(c)
+          ..needsRecovery = false;
         return c;
       } on RangeTransferException catch (error) {
         selected.failures++;
+        selected.needsRecovery = true;
         if (error.reason == 'deadline') selected.timeouts++;
-        selected.cooldownUntil = _clock.elapsed + cooldown;
+        selected.cooldownUntil = _now() + cooldown;
         if (!error.retryable) {
           selected.excluded = true;
           rethrow;
