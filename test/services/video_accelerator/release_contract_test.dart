@@ -16,7 +16,7 @@ void main() {
   test('version and Android release identity stay consistent', () {
     expect(
       File('pubspec.yaml').readAsStringSync(),
-      contains('version: 0.1.3+5'),
+      contains('version: 0.1.4+6'),
     );
     final gradle = File('android/app/build.gradle.kts').readAsStringSync();
     expect(
@@ -35,7 +35,7 @@ void main() {
       '$readme documents current modes, fork release and test boundaries',
       () {
         final text = File(readme).readAsStringSync();
-        expect(text, contains('0.1.3+5'));
+        expect(text, contains('0.1.4+6'));
         expect(text, contains('Multi-CDN Auto'));
         expect(text, contains('Multi-Range Auto'));
         expect(text, contains('OFF/ON'));

@@ -188,3 +188,5 @@ test*
 /docs/accelerator/bare-etag-local/
 
 /docs/accelerator/raw-condition-local/
+
+/docs/accelerator/head-lifecycle-local/

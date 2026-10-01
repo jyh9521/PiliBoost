@@ -122,7 +122,7 @@ void main() {
     });
   }
   test(
-    'cache replay adds output but no received or fresh network payload',
+    'cache replay counts fresh demand prefix separately from cached tail',
     () async {
       final first = await read(range: 'bytes=0-1048575');
       expect(first.$2, data.sublist(0, 1048576));
@@ -134,9 +134,15 @@ void main() {
       final second = await read(range: 'bytes=0-1048575');
       expect(second.$2, first.$2);
       await Future<void>.delayed(const Duration(milliseconds: 30));
-      expect(relay.metrics.upstreamBytes, 1048576);
-      expect(relay.metrics.freshForwardedBytes, 1048576);
-      expect(relay.metrics.cachedForwardedBytes, 1048576);
+      final freshPrefix = relay.metrics.freshForwardedBytes - 1048576;
+      expect(freshPrefix, greaterThan(0));
+      expect(freshPrefix, lessThan(262144));
+      expect(relay.metrics.upstreamBytes, 1048576 + freshPrefix);
+      expect(relay.metrics.cachedForwardedBytes, 1048576 - freshPrefix);
+      expect(
+        relay.metrics.freshForwardedBytes + relay.metrics.cachedForwardedBytes,
+        2097152,
+      );
       expect(relay.forwardedBytes, 2097152);
     },
   );
@@ -146,15 +152,30 @@ void main() {
     expect(chunkHits, 0);
     expect(failed, 0);
   });
-  test('changed chunk validator never produces accepted body', () async {
+  test('changed chunk validator aborts after only the valid original demand prefix', () async {
     mode = 'changed';
+    final collected = <int>[];
+    var aborted = false;
+    final q = await consumer.getUrl(relay.uri);
+    q.headers.set('range', 'bytes=0-500000');
+    final response = await q.close();
+    expect(response.statusCode, 206);
     try {
-      await read(range: 'bytes=0-500000');
-    } catch (_) {}
+      await for (final chunk in response) {
+        collected.addAll(chunk);
+      }
+    } catch (_) {
+      aborted = true;
+    }
     await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(aborted, isTrue);
+    expect(chunkHits, greaterThan(0));
     expect(failed, 1);
-    expect(relay.forwardedBytes, 0);
     expect(relay.errors, 1);
+    expect(collected.length, relay.forwardedBytes);
+    expect(collected.length, greaterThan(0));
+    expect(collected.length, lessThan(500001));
+    expect(collected, data.sublist(0, collected.length));
   });
   test(
     'overlapping seek cancels old generation and new range is exact',

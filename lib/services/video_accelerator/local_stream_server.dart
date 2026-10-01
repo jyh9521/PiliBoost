@@ -73,6 +73,7 @@ class LocalStreamServer {
       _pool?.rejectionReasons ?? const {};
   final void Function()? onFailure;
   final _handlers = <Future<void>>{};
+  final _metadataClients = <HttpClient>{};
   int get pendingHandlers => _handlers.length;
   HttpServer? _server;
   HttpClient? _client;
@@ -116,6 +117,67 @@ class LocalStreamServer {
     await r.response.close();
   }
 
+  // Metadata readers never own or invalidate the active playback generation.
+  Future<void> _head(
+    HttpRequest r,
+    Uri remote,
+    ByteRange? range,
+    String? rawRange,
+  ) async {
+    if (_metadataClients.length >= 4) {
+      await _empty(r, 503);
+      return;
+    }
+    final client = clientFactory()..autoUncompress = false;
+    _metadataClients.add(client);
+    try {
+      final request = await client.headUrl(remote).timeout(timeout);
+      request.followRedirects = false;
+      headers.forEach(request.headers.set);
+      request.headers.set('accept-encoding', 'identity');
+      if (rawRange != null) request.headers.set('range', rawRange);
+      final response = await request.close().timeout(timeout);
+      if (_closed) return;
+      final capability = CdnCapability.inspect(
+        statusCode: response.statusCode,
+        contentLength: response.contentLength,
+        requestedRange: range,
+        contentRange: response.headers.value('content-range'),
+        etag: response.headers.value('etag'),
+        encoding: response.headers.value('content-encoding'),
+      );
+      if (capability.failureReason != null) {
+        await _empty(r, 502);
+        return;
+      }
+      if (response.statusCode == 416) {
+        r.response.headers.set(
+          'content-range',
+          response.headers.value('content-range')!,
+        );
+        await _empty(r, 416);
+        return;
+      }
+      r.response.statusCode = response.statusCode;
+      r.response.contentLength = response.contentLength;
+      for (final name in ['content-range', 'content-type', 'accept-ranges']) {
+        final value = response.headers.value(name);
+        if (value != null) r.response.headers.set(name, value);
+      }
+      r.response.headers.set('cache-control', 'no-store');
+      await r.response.close();
+    } catch (_) {
+      try {
+        await _empty(r, 502);
+      } catch (_) {
+        /* metadata consumer left */
+      }
+    } finally {
+      client.close(force: true);
+      _metadataClients.remove(client);
+    }
+  }
+
   Future<void> _handle(HttpRequest r) async {
     HttpClient? client;
     var committed = false;
@@ -123,6 +185,9 @@ class LocalStreamServer {
     var upstreamFailed = false;
     var upstreamCompleted = false;
     var epoch = -1;
+    StreamIterator<List<int>>? prefixReader;
+    var prefixBytes = 0;
+    Stream<List<int>>? remainingBody;
     try {
       if (_closed || r.uri.path != '/$_token/video' || r.uri.hasQuery) {
         await _empty(r, 404);
@@ -144,6 +209,10 @@ class LocalStreamServer {
       final remote = source();
       if (!['http', 'https'].contains(remote.scheme) || remote.host.isEmpty) {
         throw const FormatException('Invalid media source');
+      }
+      if (r.method == 'HEAD') {
+        await _head(r, remote, range, rawRange);
+        return;
       }
       cancelRequests();
       epoch = _epoch;
@@ -205,6 +274,34 @@ class LocalStreamServer {
         if (value != null) r.response.headers.set(name, value);
       }
       r.response.headers.set('cache-control', 'no-store');
+      // Publish the first real demand bytes before complete parallel chunks.
+      // dart:io flush() alone does not emit headers before a body sink exists.
+      r.response.bufferOutput = false;
+      if (rangeConcurrency > 1 &&
+          (capability.parallelEligible ||
+              EntityTag.isBareCandidate(response.headers.value('etag')))) {
+        prefixReader = StreamIterator(response.timeout(timeout));
+        if (!await prefixReader.moveNext()) {
+          throw const RangeTransferException('truncatedBody');
+        }
+        final prefix = prefixReader.current;
+        if (prefix.length > response.contentLength) {
+          throw const RangeTransferException('oversizedBody');
+        }
+        prefixBytes = prefix.length;
+        upstreamBytes += prefixBytes;
+        metrics.received(prefixBytes);
+        r.response.add(prefix);
+        committed = true;
+        await r.response.flush();
+        _recordForwarded(prefixBytes);
+        observedConcurrency = max(observedConcurrency, 1);
+        remainingBody = _remaining(prefixReader);
+        if (prefixBytes == response.contentLength) {
+          await r.response.close();
+          return;
+        }
+      }
       if (rangeConcurrency > 1 && r.method == 'GET') {
         final etag = response.headers.value('etag');
         if (!capability.parallelEligible &&
@@ -253,9 +350,10 @@ class LocalStreamServer {
               : null;
           final total = cr?.total ?? response.contentLength;
           if (total > 0) {
-            final first = cr?.start ?? 0;
+            final first = (cr?.start ?? 0) + prefixBytes;
             final last = cr?.end ?? total - 1;
             client.close(force: true);
+            await prefixReader?.cancel();
             final previous = _parallelDrain;
             final completion = Completer<void>();
             _parallelDrain = completion.future;
@@ -380,9 +478,9 @@ class LocalStreamServer {
       }
       committed = true;
       if (r.method != 'HEAD') {
-        var received = 0;
+        var received = prefixBytes;
         await r.response.addStream(
-          response
+          (remainingBody ?? response)
               .timeout(timeout)
               .handleError((Object error) {
                 upstreamFailed = true;
@@ -429,7 +527,10 @@ class LocalStreamServer {
       // Cancellation from seek/close is not a CDN failure.
       if (!_closed &&
           !consumerGone &&
-          (!committed || upstreamFailed) &&
+          (!committed ||
+              upstreamFailed ||
+              error is RangeTransferException ||
+              error is ArgumentError) &&
           epoch == _epoch &&
           epoch >= 0) {
         errors++;
@@ -452,10 +553,17 @@ class LocalStreamServer {
       }
     } finally {
       client?.close(force: true);
+      await prefixReader?.cancel();
       if (identical(_client, client)) {
         _client = null;
         activeRequests = 0;
       }
+    }
+  }
+
+  Stream<List<int>> _remaining(StreamIterator<List<int>> reader) async* {
+    while (await reader.moveNext()) {
+      yield reader.current;
     }
   }
 
@@ -489,6 +597,9 @@ class LocalStreamServer {
   Future<void> _close() async {
     _closed = true;
     cancelRequests();
+    for (final client in _metadataClients.toList()) {
+      client.close(force: true);
+    }
     try {
       await _starting;
     } catch (_) {
