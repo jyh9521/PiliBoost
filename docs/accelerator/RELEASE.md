@@ -1,6 +1,6 @@
 # Android release preparation
 
-Version: `0.1.0+2`. Release application ID: `com.jyh9521.piliboost`.
+Version: `0.1.1+3`. Release application ID: `com.jyh9521.piliboost`.
 Debug remains `com.example.piliplus.debug`. Release and debug installs are
 separate applications; neither automatically migrates the other's data.
 Display name, source link and update API now belong to PiliBoost.

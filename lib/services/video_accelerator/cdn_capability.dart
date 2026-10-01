@@ -11,6 +11,7 @@ class CdnCapability {
     String? etag,
     String? encoding,
   }) : validatorStatus = EntityTag.status(etag),
+       etagFormat = EntityTag.format(etag),
        validatorTransportable = EntityTag.isTransportableStrong(etag) {
     if (statusCode == 416) {
       rangeStatus = 'unsatisfied';
@@ -57,6 +58,7 @@ class CdnCapability {
   final int statusCode;
   final String validatorStatus;
   final bool validatorTransportable;
+  final Map<String, Object?> etagFormat;
   String rangeStatus = 'unmeasured';
   int? totalBytes;
   bool identityEncoding = false;
@@ -71,6 +73,7 @@ class CdnCapability {
     'rangeStatus': rangeStatus,
     'validatorStatus': validatorStatus,
     'validatorTransportable': validatorTransportable,
+    'etagFormat': etagFormat,
     'identityEncoding': identityEncoding,
     'totalBytes': totalBytes,
     'parallelEligible': parallelEligible,

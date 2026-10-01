@@ -182,3 +182,5 @@ test*
 /docs/accelerator/settings-local/
 
 /docs/accelerator/release-local/
+
+/docs/accelerator/etag-local/

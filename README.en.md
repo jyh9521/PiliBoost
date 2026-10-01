@@ -3,7 +3,7 @@
     <h1>PiliBoost</h1>
 </div>
 
-## PiliBoost · 0.1.0 release preparation
+## PiliBoost · 0.1.1 diagnostics update
 
 A [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) fork with adaptive CDN selection and bounded streaming acceleration.
 Development belongs to [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost); upstream is a reference and synchronization source.
@@ -25,6 +25,8 @@ Lane caps: 4/8/12/16. Cache: 4/8/16 MiB; reorder payload: at most 4 MiB. These a
 Missing or transport-incompatible strong validators stay single-connection. Errors attempt original-source recovery.
 No disk cache, live acceleration, parallel audio or unvalidated cross-CDN byte splicing.
 
+0.1.1 diagnostic update: copied snapshots include `cdnCapabilities → etagFormat` for quote/prefix/character-shape evidence, without ETag values. Parallel admission is unchanged.
+
 ### Verification
 
 Diagnostics separate received network payload, fresh ordered output, cache output, observed concurrency, buffering and CDN capabilities/fallback reasons.
@@ -34,7 +36,7 @@ Automated tests and controlled native fixtures are validated; real CDN gains and
 
 ### Release and build
 
-Version: **0.1.0+2**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
+Version: **0.1.1+3**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
 A dedicated release key is required. Existing `com.example.piliplus.debug` test builds remain separate; data is not migrated automatically.
 Published builds belong in this fork's [Releases](https://github.com/jyh9521/PiliBoost/releases). Release preparation/build output is not stable device acceptance.
 [Build/signing](docs/accelerator/RELEASE.md) · [Budgets/export](docs/accelerator/V8SETTINGS.md) · [Validation](docs/accelerator/VALIDATION.md) · [Attribution](NOTICE).

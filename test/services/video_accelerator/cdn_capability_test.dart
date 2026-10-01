@@ -224,6 +224,10 @@ void main() {
         expect(bytes, valid ? List.generate(10, (i) => i) : isEmpty);
         expect(chunkRequests, (mode == 'strong') ? 1 : 0);
         final evidence = relay.cdnCapabilities.single;
+        final shape = evidence['etagFormat'] as Map;
+        expect(shape['weakPrefix'], mode == 'weak');
+        expect(shape['openingQuote'], mode != 'malformed');
+        expect(shape['invalidReason'], mode == 'malformed' ? 'missingOpeningQuote' : 'none');
         expect(
           evidence['parallelEligible'],
           (mode == 'strong'),

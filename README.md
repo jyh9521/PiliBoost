@@ -3,7 +3,7 @@
     <img width="200" height="200" src="assets/images/logo/logo.png">
 </div>
 
-## PiliBoost · 0.1.0 发布准备
+## PiliBoost · 0.1.1 诊断更新
 
 基于 [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) 的自适应 CDN 与有界流媒体加速客户端。
 主仓库为 [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost)，上游仅作为架构参考与同步来源。
@@ -25,6 +25,8 @@
 无可传输的强 ETag 时保持单连接；失败尝试原源恢复。缓存不写磁盘，预算不是进程总内存上限。
 直播、音频并发以及任意 CDN 的无校验拼接不在当前实现中。
 
+0.1.1 诊断更新：复制诊断包含 `cdnCapabilities → etagFormat`，可定位引号/弱标签/非法字符格式问题，不输出 ETag 内容；并发准入规则保持不变。
+
 ### 如何验证
 
 诊断页分别显示网络接收、网络顺序输出、缓存输出、实际观测并发、缓冲和 CDN 能力/降级原因。
@@ -34,7 +36,7 @@
 
 ### 发布与构建
 
-当前版本为 **0.1.0+2**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
+当前版本为 **0.1.1+3**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
 release 使用独立发布密钥；此前 `com.example.piliplus.debug` 测试包独立保留，数据不会自动迁移。
 从本仓库 [Releases](https://github.com/jyh9521/PiliBoost/releases) 获取已发布构建；本轮处于发布准备阶段，不把 release 构建等同于稳定版验收。
 [构建与签名说明](docs/accelerator/RELEASE.md) · [V8 设置与导出](docs/accelerator/V8SETTINGS.md) · [验证说明](docs/accelerator/VALIDATION.md) · [算法署名](NOTICE)。

@@ -50,6 +50,13 @@ abstract final class DiagnosticExport {
     'active',
     'statusCode',
     'totalBytes',
+    'length',
+    'quoteCount',
+    'nonAsciiCount',
+    'nonOctetCount',
+    'whitespaceCount',
+    'controlCount',
+    'firstInvalidIndex',
   };
   static const _flags = {
     'probeBusy',
@@ -59,6 +66,15 @@ abstract final class DiagnosticExport {
     'identityEncoding',
     'parallelEligible',
     'validatorTransportable',
+    'present',
+    'weakPrefix',
+    'lowercaseWeakPrefix',
+    'openingQuote',
+    'closingQuote',
+    'asciiOnly',
+    'leadingWhitespace',
+    'trailingWhitespace',
+    'possibleCombinedValues',
   };
   static const _labels = {
     'state',
@@ -75,6 +91,7 @@ abstract final class DiagnosticExport {
     'recoveryState',
     'autoDecisionThroughputSource',
     'throughputSource',
+    'invalidReason',
   };
   static const _values = {
     'off',
@@ -153,6 +170,14 @@ abstract final class DiagnosticExport {
     'noSwitchHandler',
     'insufficientProbeGain',
     'challengerFailed',
+    'empty',
+    'none',
+    'missingOpeningQuote',
+    'missingClosingQuote',
+    'quoteInOpaque',
+    'whitespaceInOpaque',
+    'controlInOpaque',
+    'nonOctetInOpaque',
   };
   static bool _known(String value) =>
       _values.contains(value) ||
@@ -186,6 +211,8 @@ abstract final class DiagnosticExport {
             .whereType<Map>()
             .map(sanitize)
             .toList();
+      } else if (key == 'etagFormat' && value is Map) {
+        out['etagFormat'] = sanitize(value);
       } else if (key == 'poolRejectionReasons' && value is Map) {
         out['poolRejectionReasons'] = {
           for (final e in value.entries)

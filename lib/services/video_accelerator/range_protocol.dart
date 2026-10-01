@@ -22,6 +22,64 @@ class EntityTag {
   // dart:io outgoing header validation only accepts ASCII field values.
   static bool isTransportableStrong(String? value) =>
       isStrong(value) && value!.codeUnits.every((c) => c < 0x80);
+
+  /// Structural evidence only. Never retain characters, hashes or validator values.
+  static Map<String, Object?> format(String? value) {
+    final units = value?.codeUnits ?? const <int>[];
+    final weak = value?.startsWith('W/') ?? false;
+    final offset = weak ? 2 : 0;
+    final tag = value == null ? '' : value.substring(offset);
+    final opening = tag.startsWith('"'), closing = tag.endsWith('"');
+    final quoted = tag.length >= 2 && opening && closing;
+    var reason = value == null
+        ? 'missing'
+        : value.isEmpty
+        ? 'empty'
+        : !opening
+        ? 'missingOpeningQuote'
+        : !quoted
+        ? 'missingClosingQuote'
+        : 'none';
+    int? invalidIndex;
+    if (quoted) {
+      for (var i = offset + 1; i < units.length - 1; i++) {
+        final c = units[i];
+        if (c == 0x21 || c >= 0x23 && c <= 0x7e || c >= 0x80 && c <= 0xff) {
+          continue;
+        }
+        invalidIndex = i;
+        reason = c == 0x22
+            ? 'quoteInOpaque'
+            : c == 0x20 || c == 9
+            ? 'whitespaceInOpaque'
+            : c < 0x20 || c == 0x7f
+            ? 'controlInOpaque'
+            : 'nonOctetInOpaque';
+        break;
+      }
+    }
+    bool whitespace(int c) => c == 0x20 || c == 9 || c == 10 || c == 13;
+    return Map.unmodifiable({
+      'present': value != null,
+      'length': units.length,
+      'weakPrefix': weak,
+      'lowercaseWeakPrefix': value?.startsWith('w/') ?? false,
+      'openingQuote': opening,
+      'closingQuote': closing,
+      'quoteCount': units.where((c) => c == 0x22).length,
+      'asciiOnly': units.every((c) => c < 0x80),
+      'nonAsciiCount': units.where((c) => c >= 0x80).length,
+      'nonOctetCount': units.where((c) => c > 0xff).length,
+      'whitespaceCount': units.where(whitespace).length,
+      'controlCount': units.where((c) => c < 0x20 || c == 0x7f).length,
+      'leadingWhitespace': units.isNotEmpty && whitespace(units.first),
+      'trailingWhitespace': units.isNotEmpty && whitespace(units.last),
+      'possibleCombinedValues': RegExp(r'"\s*,\s*(?:W/)?"')
+          .hasMatch(value ?? ''),
+      'invalidReason': reason,
+      'firstInvalidIndex': invalidIndex,
+    });
+  }
 }
 
 /// A single HTTP byte range. Multipart requests are deliberately not supported.

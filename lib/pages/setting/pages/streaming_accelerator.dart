@@ -214,6 +214,9 @@ class _AcceleratorDiagnosticsPageState
             ),
             Text('状态：${data['state']}'),
             Text(AcceleratorEffectSummary.describe(data)),
+            const Text(
+              'ETag 格式采样已包含在复制诊断的 cdnCapabilities → etagFormat 中；不记录 ETag 内容或签名 URL。',
+            ),
             Text(
               '网络接收：${AcceleratorEffectSummary.rate(data['networkReceivedBps'])}（含探测/重试）',
             ),
