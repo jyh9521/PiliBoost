@@ -60,6 +60,11 @@ class LocalStreamServer {
       max(0, (_scheduler?.pendingRanges ?? 0) - activeRanges);
   int get activeRanges => _scheduler?.downloader.activeRequests ?? 0;
   int get reservedBytes => _scheduler?.reservedBytes ?? 0;
+  int get transportClientsCreated =>
+      _scheduler?.downloader.clientsCreated ?? _lastClientsCreated;
+  int get transportClientsReused =>
+      _scheduler?.downloader.clientsReused ?? _lastClientsReused;
+  int _lastClientsCreated = 0, _lastClientsReused = 0;
   int actualConcurrency = 1;
   String parallelStatus = 'singleConnection';
   String validatorStatus = 'unmeasured';
@@ -468,6 +473,9 @@ class LocalStreamServer {
               // addStream cancels its subscription and waits for async* finally.
               upstreamBytes +=
                   (downloader?.upstreamBytes ?? 0) - upstreamBefore;
+              _lastClientsCreated = downloader?.clientsCreated ?? 0;
+              _lastClientsReused = downloader?.clientsReused ?? 0;
+              downloader?.releaseClients();
               if (identical(_scheduler, scheduler)) _scheduler = null;
               completion.complete();
             }

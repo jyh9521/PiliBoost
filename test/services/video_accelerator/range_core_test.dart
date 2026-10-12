@@ -352,7 +352,8 @@ void main() {
         scheduler.read(resource, 0, 8191).toList(),
         throwsA(isA<RangeTransferException>()),
       );
-      expect(scheduler.deliveredBytes, 1024);
+      // The fast failing later range now cancels the deliberately slow head.
+      expect(scheduler.deliveredBytes, 0);
       expect(scheduler.reservedBytes, 0);
       expect(downloader.activeRequests, 0);
       expect(requested.length, lessThanOrEqualTo(8));

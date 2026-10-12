@@ -255,11 +255,14 @@ class RangeDownloader {
     this.onBytesReceived,
     this.maxChunkBytes = 256 * 1024,
     this.maxAttempts = 2,
+    this.maxIdleClients = 16,
     this.timeout = const Duration(seconds: 8),
     this.retryDelay = const Duration(milliseconds: 150),
   }) {
     if (maxChunkBytes <= 0 ||
         maxChunkBytes > 1024 * 1024 ||
+        maxIdleClients < 0 ||
+        maxIdleClients > 16 ||
         maxAttempts < 1 ||
         maxAttempts > 3 ||
         timeout <= Duration.zero ||
@@ -271,7 +274,40 @@ class RangeDownloader {
   final void Function(int)? onBytesReceived;
   final Map<String, String> headers;
   final HttpClient Function() clientFactory;
-  final int maxChunkBytes, maxAttempts;
+  final int maxChunkBytes, maxAttempts, maxIdleClients;
+  final _idleClients = <(Uri, HttpClient)>[];
+  final _leasedClients = <HttpClient>{};
+  int _clientsCreated = 0, _clientsReused = 0;
+  int get clientsCreated => _clientsCreated;
+  int get clientsReused => _clientsReused;
+  int get idleClients => _idleClients.length;
+  int get leasedClients => _leasedClients.length;
+
+  /// Reusable objects, but release all sockets at request/session boundaries.
+  void releaseClients() {
+    for (final entry in _idleClients) {
+      entry.$2.close(force: true);
+    }
+    _idleClients.clear();
+    for (final client in _leasedClients.toList()) {
+      client.close(force: true);
+    }
+  }
+
+  HttpClient _lease(Uri uri) {
+    final index = _idleClients.indexWhere((entry) => entry.$1 == uri);
+    if (index >= 0) {
+      _clientsReused++;
+      return _idleClients.removeAt(index).$2;
+    }
+    final client = clientFactory()
+      ..autoUncompress = false
+      ..maxConnectionsPerHost = 1
+      ..idleTimeout = const Duration(seconds: 15);
+    _clientsCreated++;
+    return client;
+  }
+
   final Duration timeout, retryDelay;
   int attempts = 0, retries = 0, upstreamBytes = 0;
   int activeRequests = 0, peakActiveRequests = 0;
@@ -310,8 +346,14 @@ class RangeDownloader {
     int attempt,
   ) async {
     token.check();
-    final client = clientFactory()..autoUncompress = false;
-    void close() => client.close(force: true);
+    final client = _lease(resource.uri);
+    _leasedClients.add(client);
+    var reusable = false;
+    void close() {
+      reusable = false;
+      client.close(force: true);
+    }
+
     token.attach(close);
     attempts++;
     activeRequests++;
@@ -380,6 +422,7 @@ class RangeDownloader {
       if (received != bytes.length) {
         throw const RangeTransferException('truncatedBody', retryable: true);
       }
+      reusable = true;
       return RangeChunk(
         start,
         bytes,
@@ -402,7 +445,15 @@ class RangeDownloader {
     } finally {
       deadline?.cancel();
       token.detach(close);
-      close();
+      _leasedClients.remove(client);
+      if (reusable &&
+          !token.cancelled &&
+          !timedOut &&
+          _idleClients.length < maxIdleClients) {
+        _idleClients.add((resource.uri, client));
+      } else {
+        close();
+      }
       activeRequests--;
     }
   }

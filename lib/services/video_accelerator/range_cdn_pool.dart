@@ -197,6 +197,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
           _reject('candidateValidationError');
         } finally {
           if (!lanes.contains(next)) {
+            next.downloader.releaseClients();
             _rejectedProbeBytes += next.downloader.upstreamBytes;
           }
           _syncBytes();
@@ -214,6 +215,7 @@ class RangePoolDownloader extends CachedRangeDownloader {
           0,
           (sum, l) => sum + l.downloader.upstreamBytes,
         );
+        releaseClients();
         lanes.clear();
         _syncBytes();
       }
@@ -226,6 +228,20 @@ class RangePoolDownloader extends CachedRangeDownloader {
       if (a[i] != b[i]) return false;
     }
     return true;
+  }
+
+  @override
+  int get clientsCreated =>
+      lanes.fold(0, (sum, l) => sum + l.downloader.clientsCreated);
+  @override
+  int get clientsReused =>
+      lanes.fold(0, (sum, l) => sum + l.downloader.clientsReused);
+  @override
+  void releaseClients() {
+    super.releaseClients();
+    for (final lane in lanes) {
+      lane.downloader.releaseClients();
+    }
   }
 
   @override

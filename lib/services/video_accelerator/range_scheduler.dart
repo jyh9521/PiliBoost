@@ -10,7 +10,7 @@ class _Outcome {
   final Object? error;
 }
 
-/// Demand-driven bounded reorder windows; no speculative cache or disk writes.
+/// Demand-driven rolling reorder queue; refill only after consumer resumes.
 /// One active consumer. Cancel its subscription before opening a seek generation.
 class OrderedRangeScheduler {
   OrderedRangeScheduler({
@@ -67,52 +67,58 @@ class OrderedRangeScheduler {
     final epoch = generation;
     final token = RangeCancellation();
     _token = token;
-    var pending = <Future<_Outcome>>[];
+    final pending = <(int, Future<_Outcome>)>[];
+    Object? firstFailure;
+    var cursor = start;
+    void fill() {
+      final width = (windowConcurrency?.call() ?? concurrency).clamp(
+        1,
+        concurrency,
+      );
+      while (pending.length < width && cursor <= end && !token.cancelled) {
+        final first = cursor, last = min(cursor + chunkBytes - 1, end);
+        final length = last - first + 1;
+        reservedBytes += length;
+        final future = downloader
+            .fetch(resource, first, last, token)
+            .then(
+              (chunk) => _Outcome(chunk, null),
+              onError: (Object error) {
+                if (error is! RangeCancelled) {
+                  firstFailure ??= error;
+                  token.cancel();
+                }
+                return _Outcome(null, error);
+              },
+            );
+        pending.add((length, future));
+        cursor = last + 1;
+      }
+      pendingRanges = pending.length;
+      peakReservedBytes = max(peakReservedBytes, reservedBytes);
+    }
+
     try {
-      var cursor = start;
-      while (cursor <= end) {
+      while (cursor <= end || pending.isNotEmpty) {
+        if (firstFailure != null) throw firstFailure!;
         token.check();
-        reservedBytes = 0;
-        pending = [];
-        final width = (windowConcurrency?.call() ?? concurrency).clamp(
-          1,
-          concurrency,
-        );
-        for (var i = 0; i < width && cursor <= end; i++) {
-          final last = min(cursor + chunkBytes - 1, end);
-          reservedBytes += last - cursor + 1;
-          // Handle every Future immediately, including out-of-order failures.
-          pending.add(
-            downloader
-                .fetch(resource, cursor, last, token)
-                .then(
-                  (chunk) => _Outcome(chunk, null),
-                  onError: (Object error) => _Outcome(null, error),
-                ),
-          );
-          cursor = last + 1;
-        }
+        fill();
+        final entry = pending.removeAt(0);
+        final outcome = await entry.$2;
+        if (firstFailure != null) throw firstFailure!;
+        token.check();
+        if (epoch != generation) throw const RangeCancelled();
+        if (outcome.error != null) throw outcome.error!;
         pendingRanges = pending.length;
-        if (reservedBytes > peakReservedBytes) {
-          peakReservedBytes = reservedBytes;
-        }
-        for (final future in pending) {
-          final outcome = await future;
-          token.check();
-          if (epoch != generation) throw const RangeCancelled();
-          if (outcome.error != null) throw outcome.error!;
-          pendingRanges--;
-          deliveredBytes += outcome.chunk!.bytes.length;
-          onChunkReady?.call(outcome.chunk!);
-          yield outcome.chunk!.bytes;
-        }
-        // Start no additional window while the consumer is paused at yield.
-        pending = [];
-        reservedBytes = 0;
+        deliveredBytes += outcome.chunk!.bytes.length;
+        onChunkReady?.call(outcome.chunk!);
+        yield outcome.chunk!.bytes;
+        // Keep yielded bytes reserved while paused. Refill on next iteration only.
+        reservedBytes -= entry.$1;
       }
     } finally {
       token.cancel();
-      await Future.wait(pending);
+      await Future.wait(pending.map((entry) => entry.$2));
       reservedBytes = 0;
       pendingRanges = 0;
       if (identical(_token, token)) _token = null;

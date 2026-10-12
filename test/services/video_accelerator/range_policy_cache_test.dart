@@ -39,7 +39,7 @@ class _DemandDownloader extends RangeDownloader {
 
 void main() {
   test(
-    'dynamic width changes only next window, with paused demand bounded',
+    'dynamic width applies on consumer resume with rolling demand bounded',
     () async {
       final d = _DemandDownloader();
       var width = 4;
@@ -59,10 +59,14 @@ void main() {
       expect(await iterator.moveNext(), isTrue);
       expect(d.started, 4);
       width = 8;
+      expect(
+        d.started,
+        4,
+      ); // Width change alone does not refill a paused reader.
       for (var i = 0; i < 3; i++) {
         expect(await iterator.moveNext(), isTrue);
+        expect(d.started, 9 + i);
       }
-      expect(d.started, 4);
       expect(await iterator.moveNext(), isTrue);
       expect(d.started, 12);
       while (await iterator.moveNext()) {}

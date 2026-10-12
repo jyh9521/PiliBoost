@@ -426,6 +426,8 @@ class AcceleratorSession {
       'networkForwardedBytes': proxy?.metrics.freshForwardedBytes ?? 0,
       'cacheForwardedBytes': proxy?.metrics.cachedForwardedBytes ?? 0,
       'observedConcurrency': proxy?.observedConcurrency ?? 0,
+      'transportClientsCreated': proxy?.transportClientsCreated ?? 0,
+      'transportClientsReused': proxy?.transportClientsReused ?? 0,
       'autoDecisionThroughputSource': config.usesProxy
           ? 'freshNetworkOrderedVideoWindow'
           : 'mpvAuxiliary',

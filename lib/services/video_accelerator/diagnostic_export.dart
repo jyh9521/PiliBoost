@@ -15,6 +15,8 @@ abstract final class DiagnosticExport {
     'networkForwardedBytes',
     'cacheForwardedBytes',
     'observedConcurrency',
+    'transportClientsCreated',
+    'transportClientsReused',
     'proxyThroughputBps',
     'proxyUpstreamBytes',
     'proxyForwardedBytes',
