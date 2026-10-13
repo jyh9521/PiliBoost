@@ -1,5 +1,6 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 // ignore_for_file: cascade_invocations
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -12,8 +13,10 @@ void main() {
   late LocalStreamServer relay;
   late HttpClient consumer;
   var mode = 'valid', active = 0, peak = 0, failed = 0, chunkHits = 0;
+  Completer<void>? prefixGate;
   setUp(() async {
     mode = 'valid';
+    prefixGate = null;
     active = peak = failed = chunkHits = 0;
     origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     origin.listen((r) async {
@@ -52,7 +55,21 @@ void main() {
                   : '"fixture"',
             );
           r.response.contentLength = b - a + 1;
-          if (r.method != 'HEAD') r.response.add(data.sublist(a, b + 1));
+          if (r.method != 'HEAD') {
+            final gate = prefixGate;
+            if (!isChunk && gate != null && b - a + 1 > 8192) {
+              r.response.bufferOutput = false;
+              // The metric contract needs a known first payload. A single add
+              // permits TCP coalescing to deliver the whole 1 MiB as a prefix.
+              // Wait for downstream headers before releasing the remaining body.
+              r.response.add(data.sublist(a, a + 8192));
+              await r.response.flush();
+              await gate.future;
+              r.response.add(data.sublist(a + 8192, b + 1));
+            } else {
+              r.response.add(data.sublist(a, b + 1));
+            }
+          }
         }
         await r.response.close();
       } catch (_) {
@@ -81,6 +98,7 @@ void main() {
     final r = await consumer.openUrl(method, relay.uri);
     if (range != null) r.headers.set('range', range);
     final response = await r.close();
+    if (prefixGate != null && !prefixGate!.isCompleted) prefixGate!.complete();
     return (
       response.statusCode,
       await response.fold<List<int>>([], (a, b) => a..addAll(b)),
@@ -124,6 +142,7 @@ void main() {
   test(
     'cache replay counts fresh demand prefix separately from cached tail',
     () async {
+      prefixGate = Completer<void>();
       final first = await read(range: 'bytes=0-1048575');
       expect(first.$2, data.sublist(0, 1048576));
       await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -131,6 +150,7 @@ void main() {
       expect(relay.metrics.freshForwardedBytes, 1048576);
       expect(relay.metrics.cachedForwardedBytes, 0);
       expect(relay.observedConcurrency, 4);
+      prefixGate = Completer<void>();
       final second = await read(range: 'bytes=0-1048575');
       expect(second.$2, first.$2);
       await Future<void>.delayed(const Duration(milliseconds: 30));
