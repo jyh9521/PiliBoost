@@ -546,7 +546,7 @@ class AcceleratorSession {
       'observedConcurrency': proxy?.observedConcurrency ?? 0,
       'transportClientsCreated': proxy?.transportClientsCreated ?? 0,
       'transportClientsReused': proxy?.transportClientsReused ?? 0,
-      'autoDecisionThroughputSource': config.usesProxy
+      'autoDecisionThroughputSource': proxy != null && !bypassed
           ? 'freshNetworkOrderedVideoWindow'
           : 'mpvAuxiliary',
       'proxyThroughputBps': proxy?.throughputBps,

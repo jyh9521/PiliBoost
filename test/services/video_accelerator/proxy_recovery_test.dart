@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_config.dart';
 import 'package:PiliPlus/services/video_accelerator/accelerator_session.dart';
+import 'package:PiliPlus/services/video_accelerator/accelerator_diagnostics.dart';
 import 'package:PiliPlus/services/video_accelerator/cdn_probe.dart';
 import 'package:PiliPlus/services/video_accelerator/local_stream_server.dart';
 
@@ -276,6 +277,11 @@ void main() {
           expect(s.switches, 1);
           expect(s.proxy, isNull);
           expect(s.bypassed, isFalse);
+          s.publish();
+          expect(
+            AcceleratorDiagnostics.latest['autoDecisionThroughputSource'],
+            'mpvAuxiliary',
+          );
           expect(opens, 1);
           expect(relay.pendingHandlers, 0);
         } else if (scenario == 'openFailed') {
