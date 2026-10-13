@@ -451,24 +451,22 @@ class LocalStreamServer {
                 ),
               );
               committed = true;
-              await r.response.addStream(
-                scheduler
-                    .read(resource, first, last)
-                    .map((chunk) {
-                      if (_closed || epoch != _epoch) {
-                        throw const RangeCancelled();
-                      }
-                      _recordForwarded(chunk.length, cached: chunkCached);
-                      return chunk;
-                    })
-                    .handleError((Object error) {
-                      // Demux/seek closes the preceding request routinely. Do
-                      // not send a cancellation error into HttpResponse.addStream.
-                      if (error is RangeCancelled) return;
-                      upstreamFailed = true;
-                      throw error;
-                    }),
-              );
+              // Keep iterator cancellation owned by this handler rather than
+              // HttpResponse.addStream, which can cancel an async* iterator
+              // concurrently with a new native Range request. Flush bounds
+              // downstream buffering and preserves consumer backpressure.
+              await for (final chunk
+                  in scheduler.read(resource, first, last).handleError((
+                    Object error,
+                  ) {
+                    if (error is! RangeCancelled) upstreamFailed = true;
+                    throw error;
+                  })) {
+                if (_closed || epoch != _epoch) throw const RangeCancelled();
+                _recordForwarded(chunk.length, cached: chunkCached);
+                r.response.add(chunk);
+                await r.response.flush();
+              }
               if (scheduler.deliveredBytes != last - first + 1) {
                 cancellations++;
               }
@@ -476,7 +474,7 @@ class LocalStreamServer {
               return;
             } finally {
               scheduler?.invalidate();
-              // addStream cancels its subscription and waits for async* finally.
+              // await-for cancels its iterator and waits for async* finally.
               upstreamBytes +=
                   (downloader?.upstreamBytes ?? 0) - upstreamBefore;
               _lastClientsCreated = downloader?.clientsCreated ?? 0;
@@ -559,8 +557,10 @@ class LocalStreamServer {
         if (!committed) {
           await _empty(r, 502);
         } else {
-          final socket = await r.response.detachSocket();
-          socket.destroy();
+          // detachSocket is rejected after headers have been written. Closing
+          // an incomplete fixed-length response completes the HTTP connection
+          // with an error instead of leaving the reader waiting indefinitely.
+          await r.response.close();
         }
       } catch (_) {
         /* Consumer already disconnected. */

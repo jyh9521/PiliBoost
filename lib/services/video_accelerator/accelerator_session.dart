@@ -28,6 +28,10 @@ class AcceleratorTrack {
 typedef SourceSwitch = Future<bool> Function(String video, String? audio);
 
 class AcceleratorSession {
+  static bool isReadFailure(String event) =>
+      event.startsWith('Failed to open http') ||
+      event.startsWith('Can not open external file http') ||
+      event.startsWith('tcp: ffurl_read returned ');
   AcceleratorSession({
     required this.config,
     required this.tracks,
@@ -54,6 +58,7 @@ class AcceleratorSession {
   String? probingTrack;
   String switchOutcome = 'notSwitched';
   bool _proxyFailed = false;
+  bool _parallelHttpFailure = false;
   bool directCdnRecovery = false;
   LocalStreamServer? proxy;
   final RangeConcurrencyPolicy _rangePolicy;
@@ -102,8 +107,11 @@ class AcceleratorSession {
   Future<void> recoverPlayback() async {
     if (!enabled) return;
     final reason = proxy?.lastFailureReason;
+    _parallelHttpFailure =
+        reason != null && RegExp(r'^http(?:429|5\d\d)$').hasMatch(reason);
     final transient =
         reason == null ||
+        _parallelHttpFailure ||
         const {
           'deadline',
           'transport',
@@ -127,6 +135,7 @@ class AcceleratorSession {
   void invalidate({bool networkChanged = false}) {
     generation++;
     _proxyFailed = false;
+    _parallelHttpFailure = false;
     _cancellation?.cancel();
     proxy?.cancelRequests();
     proxy?.metrics.resetWindow();
@@ -266,6 +275,7 @@ class AcceleratorSession {
     final epoch = generation;
     final token = ProbeCancellation();
     _cancellation = token;
+    ProbeResult? checkedIncumbent;
     try {
       final eligible = tracks
           .where(
@@ -330,6 +340,7 @@ class AcceleratorSession {
         }
       }
       final current = results[track.active], other = results[challenger];
+      checkedIncumbent = current;
       if (current?.status == 403 && other?.status == 403) {
         await restoreOriginal();
         onRefreshRequired?.call();
@@ -389,6 +400,7 @@ class AcceleratorSession {
             proxy = null;
             directCdnRecovery = true;
             _proxyFailed = false;
+            _parallelHttpFailure = false;
             await oldProxy.close();
           }
           switches++;
@@ -406,14 +418,61 @@ class AcceleratorSession {
     } catch (_) {
       if (enabled && epoch == generation) await restoreOriginal();
     } finally {
-      _busy = false;
       probingTrack = null;
       if (identical(_cancellation, token)) _cancellation = null;
       if (_proxyFailed && enabled && epoch == generation) {
-        await restoreOriginal();
+        final recovered = await _recoverCurrentDirect(
+          checkedIncumbent,
+          target,
+          epoch,
+        );
+        if (!recovered && enabled && epoch == generation) {
+          await restoreOriginal();
+        }
       }
+      _busy = false;
       publish();
     }
+  }
+
+  Future<bool> _recoverCurrentDirect(
+    ProbeResult? result,
+    double target,
+    int epoch,
+  ) async {
+    // A parallel HTTP rejection need not invalidate a working single reader.
+    // Require a complete current-position sample capable of the playback target.
+    // This is an explicit direct recovery, not an assertion of eight-lane gain.
+    if (!_parallelHttpFailure ||
+        proxy == null ||
+        result?.ok != true ||
+        result?.fingerprint == null ||
+        result?.totalBytes == null ||
+        target <= 0 ||
+        result!.throughputBps < target) {
+      return false;
+    }
+    decisionReason = 'parallelHttpDirectRecovery';
+    bool ok;
+    try {
+      ok = await _switchSource();
+    } catch (_) {
+      return false;
+    }
+    if (!enabled || epoch != generation) return false;
+    if (!ok) return false;
+    final oldProxy = proxy;
+    proxy = null;
+    directCdnRecovery = true;
+    _proxyFailed = false;
+    _parallelHttpFailure = false;
+    await oldProxy?.close();
+    switches++;
+    _lastSwitch = now();
+    _lowSince = null;
+    state = 'recovering';
+    switchOutcome = 'awaitingBufferRecovery';
+    return true;
   }
 
   AcceleratorTrack _nextTrack(List<AcceleratorTrack> eligible) {

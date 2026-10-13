@@ -53,9 +53,13 @@ void main() {
         var selected = v;
         var switching = false;
         var nativeErrors = 0;
-        final errors = player.stream.error.listen((_) {
+        var readErrors = 0;
+        final errors = player.stream.error.listen((event) {
           nativeErrors++;
-          if (!switching && session?.proxy != null) {
+          if (AcceleratorSession.isReadFailure(event)) readErrors++;
+          if (!switching &&
+              session?.proxy != null &&
+              AcceleratorSession.isReadFailure(event)) {
             unawaited(session!.recoverPlayback());
           }
         });
@@ -174,9 +178,13 @@ void main() {
             'maxNoProgressSeconds': maxNoProgress,
             'videoWidth': player.state.videoParams.w,
             'nativeErrors': nativeErrors,
+            'readErrors': readErrors,
             'switches': session?.switches ?? 0,
             'directCdnRecovery': session?.directCdnRecovery ?? false,
             'bypassed': session?.bypassed ?? false,
+            'observedConcurrency': session?.proxy?.observedConcurrency ?? 0,
+            'proxyErrors': session?.proxy?.errors ?? 0,
+            'proxyFailureReason': session?.proxy?.lastFailureReason,
             'reason': session?.decisionReason,
             'samples': samples,
           };
@@ -211,6 +219,16 @@ void main() {
         greaterThan(45),
       );
       expect(on['maxNoProgressSeconds'] as int, lessThanOrEqualTo(3));
+      expect(
+        on['bypassed'],
+        false,
+        reason: 'Original-source fallback alone does not accept acceleration.',
+      );
+      expect(
+        on['directCdnRecovery'] == true ||
+            (on['observedConcurrency'] as int) >= 8,
+        isTrue,
+      );
     },
     skip: input == null || output == null,
     timeout: const Timeout(Duration(minutes: 5)),

@@ -1201,9 +1201,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
         if (!isLive &&
             accelerator != null &&
             (accelerator.enabled || _acceleratorSwitching) &&
-            (event.startsWith('Failed to open http') ||
-                event.startsWith('Can not open external file http') ||
-                event.startsWith('tcp: ffurl_read returned '))) {
+            AcceleratorSession.isReadFailure(event)) {
           if (_acceleratorSwitching) {
             // Closing the previous loopback stream during a whole-source reopen
             // can report a read error. The awaited open owns recovery here.

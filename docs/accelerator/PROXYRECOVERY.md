@@ -25,9 +25,18 @@ candidate selection. Closing the old loopback reader during a whole-source open
 does not independently request another fallback. Seek/network/exit invalidation
 cancels stale observations. OFF retains its original behavior.
 
-Routine superseded Range cancellation is consumed before the HTTP response
-stream writer. Non-cancellation transfer failures still propagate and trigger
-the bounded recovery path; resource validators and response length checks remain.
+For an HTTP 429/5xx rejection of parallel transfer, a complete validated
+incumbent sample exceeding the required playback throughput can instead reopen
+that same source directly. `parallelHttpDirectRecovery` reports this explicitly;
+it is not a faster-CDN claim or eight-lane speedup. Insufficient or failed samples
+retain original-source fallback. A custom HTTP 532 was observed in live testing;
+its server-specific meaning is not assumed.
+
+Routine superseded Range cancellation is handled by the owning relay loop.
+Parallel output flushes each validated chunk rather than delegating async
+iterator cancellation to the HTTP stream writer, retaining bounded backpressure.
+Non-cancellation transfer failures still propagate and trigger the bounded
+recovery path; resource validators and response length checks remain.
 
 ## Reproducible computer checks
 
@@ -50,6 +59,9 @@ outputs. Supply `PILIBOOST_REAL_INPUT`, `PILIBOOST_REAL_OUTPUT`, and
 video with separate audio for 60 seconds in OFF and ON at position 120 seconds,
 records progress and stalls, and requires 1920-wide decoder parameters, over
 45 seconds of ON progress and no consecutive post-start stall over three seconds.
+It also requires no original-source bypass and either observed eight-way work
+or an explicitly validated direct recovery. Native decoder warnings do not
+trigger network recovery; the read-error predicate is shared with the player.
 It does not display or persist video frames. Missing private input skips this
 live check in the normal deterministic suite.
 

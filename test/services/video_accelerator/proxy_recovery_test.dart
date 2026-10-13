@@ -9,6 +9,72 @@ import 'package:PiliPlus/services/video_accelerator/cdn_probe.dart';
 import 'package:PiliPlus/services/video_accelerator/local_stream_server.dart';
 
 void main() {
+  for (final fast in [true, false]) {
+    test(
+      'parallel HTTP rejection direct recovery requires sufficient validated sample fast=$fast',
+      () async {
+        final a = Uri.parse('https://primary/video'),
+            b = Uri.parse('https://backup/video');
+        final s = AcceleratorSession(
+          config: const AcceleratorConfig(mode: AcceleratorMode.multiRange8),
+          tracks: [
+            AcceleratorTrack(
+              kind: 'video',
+              original: a,
+              candidates: [a, b],
+              bitrateBps: 4000000,
+            ),
+          ],
+          probe: (uri, config, token) async => ProbeResult(
+            bytes: 262144,
+            elapsed: Duration(milliseconds: fast ? 100 : 1000),
+            status: 206,
+            totalBytes: 10000000,
+            fingerprint: 'same',
+          ),
+        );
+        await s.startProxy(
+          create: (source, failure) => LocalStreamServer(
+            source: source,
+            headers: const {},
+            clientFactory: HttpClient.new,
+            onFailure: failure,
+            rangeConcurrency: 8,
+          ),
+        );
+        s.proxy!.lastFailureReason = 'http532';
+        var opens = 0;
+        s.onSwitch = (v, audio) async {
+          opens++;
+          expect(v, a.toString());
+          return true;
+        };
+        await s.recoverPlayback();
+        expect(opens, 1);
+        expect(s.bypassed, !fast);
+        expect(s.directCdnRecovery, fast);
+        if (fast) {
+          expect(s.proxy, isNull);
+          expect(s.decisionReason, 'parallelHttpDirectRecovery');
+        }
+        await s.close();
+      },
+    );
+  }
+  test('native decoder warnings do not trigger network recovery', () {
+    expect(
+      AcceleratorSession.isReadFailure('Error while decoding frame'),
+      isFalse,
+    );
+    expect(
+      AcceleratorSession.isReadFailure('Failed to open https://fixture/video'),
+      isTrue,
+    );
+    expect(
+      AcceleratorSession.isReadFailure('tcp: ffurl_read returned 0xdead'),
+      isTrue,
+    );
+  });
   test(
     'new native-style Range cancels old stream without leaked cancellation',
     () async {
@@ -23,8 +89,9 @@ void main() {
           r.response.contentLength = length;
           r.response.headers.set('content-range', 'bytes $start-$end/8388608');
           r.response.headers.set('etag', '"same"');
-          if (length <= 262144)
+          if (length <= 262144) {
             await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
           r.response.add(List<int>.filled(length, 7));
           await r.response.close();
         } catch (_) {
