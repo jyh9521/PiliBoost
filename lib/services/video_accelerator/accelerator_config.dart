@@ -27,6 +27,7 @@ class AcceleratorConfig {
     this.probeTimeout = const Duration(seconds: 4),
     this.sourceSwitchTimeout = const Duration(seconds: 10),
     this.probeBytes = 256 * 1024,
+    this.probeOffset = 0,
     this.maxProbesPerRound = 2,
     this.minimumSampleBytes = 16 * 1024,
     this.maxSwitches = 4,
@@ -44,6 +45,7 @@ class AcceleratorConfig {
   }) : assert(safetyFactor > 0),
        assert(switchGain > 1),
        assert(probeBytes > 0),
+       assert(probeOffset >= 0),
        assert(maxProbesPerRound >= 2),
        assert(concurrencyLimit >= 4 && concurrencyLimit <= 16);
 
@@ -74,6 +76,7 @@ class AcceleratorConfig {
   final Duration failureCooldown, measurementTtl, probeTimeout;
   final Duration sourceSwitchTimeout;
   final int probeBytes, maxProbesPerRound, minimumSampleBytes, maxSwitches;
+  final int probeOffset;
   final double ewmaFastHalfLifeSeconds, ewmaSlowHalfLifeSeconds;
 
   static AcceleratorMode parseMode(Object? value) =>

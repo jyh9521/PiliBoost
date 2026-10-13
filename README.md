@@ -3,7 +3,7 @@
     <img width="200" height="200" src="assets/images/logo/logo.png">
 </div>
 
-## PiliBoost · 0.1.5 传输调度更新
+## PiliBoost · 0.1.6 慢线路恢复测试版
 
 基于 [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) 的自适应 CDN 与有界流媒体加速客户端。
 主仓库为 [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost)，上游仅作为架构参考与同步来源。
@@ -25,7 +25,9 @@
 标准强 ETag 直接使用；无引号 ASCII 标签须先通过错误条件 412 与正确条件 206 的双探测，之后仅允许同源并发。未通过时保持单连接；失败尝试原源恢复。缓存不写磁盘，预算不是进程总内存上限。
 直播、音频并发以及任意 CDN 的无校验拼接不在当前实现中。
 
-0.1.5 传输调度更新：分块完整验证后复用同一签名 URI 的连接客户端，减少逐片重建连接；按序输出后滚动补充任务，不再等待整批结束。暂停消费者时停止补充，身份失败立即取消同代任务。诊断增加 `transportClientsCreated` / `transportClientsReused`（客户端对象计数，不等于真实 TCP/TLS 连接或测速）。保留首批载荷、HEAD 隔离、条件 ETag 校验及回退。受控 HTTP 的连接数与时间对照不等同于真实 CDN 加速收益。
+0.1.5 传输调度基础：分块完整验证后复用同一签名 URI 的连接客户端，减少逐片重建连接；按序输出后滚动补充任务，不再等待整批结束。暂停消费者时停止补充，身份失败立即取消同代任务。诊断增加 `transportClientsCreated` / `transportClientsReused`（客户端对象计数，不等于真实 TCP/TLS 连接或测速）。保留首批载荷、HEAD 隔离、条件 ETag 校验及回退。受控 HTTP 的连接数与时间对照不等同于真实 CDN 加速收益。
+
+0.1.6 增加代理模式慢线路恢复：持续低缓冲后，在当前读取位置对照原线路与一个候选，要求总长度与完整采样一致且测速收益达标后整源重开。恢复后本次会话使用候选 CDN 直连，停止分片代理，诊断标记 directCdnRecovery；不跨线路拼接裸 ETag 资源。传输失败只允许一次有界恢复，验证失败或冷却期间失败则回到原播放链路。短采样成功不保证长播放稳定，本版本用于回归测试。
 
 ### 如何验证
 
@@ -36,7 +38,7 @@
 
 ### 发布与构建
 
-当前版本为 **0.1.5+7**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
+当前版本为 **0.1.6+8**，Android release 包名为 `com.jyh9521.piliboost`，显示名称为 **PiliBoost**。
 release 使用独立发布密钥；此前 `com.example.piliplus.debug` 测试包独立保留，数据不会自动迁移。
 从本仓库 [Releases](https://github.com/jyh9521/PiliBoost/releases) 获取已发布构建；本轮处于发布准备阶段，不把 release 构建等同于稳定版验收。
 [构建与签名说明](docs/accelerator/RELEASE.md) · [V8 设置与导出](docs/accelerator/V8SETTINGS.md) · [验证说明](docs/accelerator/VALIDATION.md) · [算法署名](NOTICE)。

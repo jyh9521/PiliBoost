@@ -53,6 +53,8 @@ class AcceleratorSession {
   String decisionReason = 'waitingForTelemetry';
   String? probingTrack;
   String switchOutcome = 'notSwitched';
+  bool _proxyFailed = false;
+  bool directCdnRecovery = false;
   LocalStreamServer? proxy;
   final RangeConcurrencyPolicy _rangePolicy;
 
@@ -68,17 +70,10 @@ class AcceleratorSession {
   }) async {
     if (!config.usesProxy || !enabled) return;
     final video = tracks.firstWhere((track) => track.kind == 'video');
-    final server = create(() => video.active, () {
-      if (enabled) {
-        final refresh = proxy?.lastFailureReason == 'http403';
-        final callback = onRefreshRequired;
-        unawaited(
-          restoreOriginal().then((_) {
-            if (refresh && !disposed) callback?.call();
-          }),
-        );
-      }
-    });
+    final server = create(
+      () => video.active,
+      () => unawaited(recoverPlayback()),
+    );
     proxy = server;
     try {
       await server.start();
@@ -103,8 +98,35 @@ class AcceleratorSession {
       : tracks.fold<double>(0, (sum, track) => sum + (track.bitrateBps ?? 0)) *
             config.safetyFactor;
 
+  /// One recovery owner for relay failures and native read errors.
+  Future<void> recoverPlayback() async {
+    if (!enabled) return;
+    final reason = proxy?.lastFailureReason;
+    final transient =
+        reason == null ||
+        const {
+          'deadline',
+          'transport',
+          'TimeoutException',
+          'HttpException',
+          'SocketException',
+        }.contains(reason);
+    if (proxy == null || onSwitch == null || !transient) {
+      final refresh = proxy?.lastFailureReason == 'http403';
+      await restoreOriginal();
+      if (refresh && !disposed) onRefreshRequired?.call();
+      return;
+    }
+    _proxyFailed = true;
+    _lowSince = now() - config.minimumLowDuration;
+    await observe(bufferAheadSeconds: 0, throughputBps: 0, playing: true);
+    // A cooldown/no-alternative result must not leave a dead relay selected.
+    if (_proxyFailed && enabled && !_busy) await restoreOriginal();
+  }
+
   void invalidate({bool networkChanged = false}) {
     generation++;
+    _proxyFailed = false;
     _cancellation?.cancel();
     proxy?.cancelRequests();
     proxy?.metrics.resetWindow();
@@ -160,9 +182,7 @@ class AcceleratorSession {
         : 0;
     final time = now();
     final target = requiredBps * speed;
-    // Foundation stage: fixed single upstream, no probe traffic or deferred
-    // host changes on an open-ended native request. Smart CDN remains separate.
-    if (config.usesProxy) {
+    if (config.usesProxy && !directCdnRecovery) {
       if (config.mode == AcceleratorMode.rangeAuto ||
           config.mode == AcceleratorMode.multiCdn) {
         _rangePolicy.observe(
@@ -188,8 +208,10 @@ class AcceleratorSession {
           state = 'accelerating';
         }
       }
-      decisionReason = !playing ? 'paused' : 'proxyObservationOnly';
-      return;
+      if (proxy == null) {
+        decisionReason = 'proxyObservationOnly';
+        return;
+      }
     }
     // A successful open is not proof of sustained playback improvement.
     if (switches > 0) {
@@ -276,11 +298,21 @@ class AcceleratorSession {
       final challenger = alternatives[track.cursor++ % alternatives.length];
       // One incumbent and one challenger, sequentially; bounded total traffic.
       final results = <Uri, ProbeResult>{};
+      // Freeze the demand offset across both samples; output can advance meanwhile.
+      final probeConfig = proxy == null
+          ? config
+          : AcceleratorConfig(
+              mode: config.mode,
+              probeOffset: proxy!.demandOffset ~/ (256 * 1024) * (256 * 1024),
+              probeBytes: config.probeBytes,
+              probeTimeout: config.probeTimeout,
+              minimumSampleBytes: config.minimumSampleBytes,
+            );
       for (final uri in [
         track.active,
         challenger,
       ].take(config.maxProbesPerRound)) {
-        final result = await probe(uri, config, token);
+        final result = await probe(uri, probeConfig, token);
         if (!enabled || epoch != generation || token.cancelled) return;
         results[uri] = result;
         final stats = track.stats.putIfAbsent(uri, () => CdnStats(config));
@@ -298,6 +330,21 @@ class AcceleratorSession {
         }
       }
       final current = results[track.active], other = results[challenger];
+      if (current?.status == 403 && other?.status == 403) {
+        await restoreOriginal();
+        onRefreshRequired?.call();
+        return;
+      }
+      if (proxy != null &&
+          (current?.ok != true ||
+              other?.ok != true ||
+              current?.totalBytes == null ||
+              other?.totalBytes == null ||
+              current?.fingerprint == null ||
+              other?.fingerprint == null)) {
+        decisionReason = 'recoverySampleUnverified';
+        return;
+      }
       if (current?.ok == true &&
           other?.ok == true &&
           ((current!.totalBytes != null &&
@@ -313,14 +360,13 @@ class AcceleratorSession {
         decisionReason = 'resourceMismatch';
         return;
       }
-      if (current?.status == 403 && other?.status == 403) {
-        await restoreOriginal();
-        onRefreshRequired?.call();
-        return;
-      }
-      final currentRate = track.stats[track.active]?.throughputBps ?? 0;
+      final currentRate = proxy != null
+          ? current!.throughputBps
+          : track.stats[track.active]?.throughputBps ?? 0;
       final challengerStats = track.stats[challenger];
-      final rate = challengerStats?.throughputBps ?? 0;
+      final rate = proxy != null
+          ? other!.throughputBps
+          : challengerStats?.throughputBps ?? 0;
       if (other?.ok == true &&
           challengerStats!.fresh(now(), config.measurementTtl) &&
           (current?.ok != true || rate >= currentRate * config.switchGain)) {
@@ -336,6 +382,15 @@ class AcceleratorSession {
           track.active = previous;
           await restoreOriginal();
         } else {
+          // Whole-source reopen: never splice bytes with a bare cross-CDN tag.
+          // Leave a failed/slow parallel relay behind for this playback session.
+          final oldProxy = proxy;
+          if (oldProxy != null) {
+            proxy = null;
+            directCdnRecovery = true;
+            _proxyFailed = false;
+            await oldProxy.close();
+          }
           switches++;
           _lastSwitch = now();
           _lowSince = null;
@@ -354,6 +409,9 @@ class AcceleratorSession {
       _busy = false;
       probingTrack = null;
       if (identical(_cancellation, token)) _cancellation = null;
+      if (_proxyFailed && enabled && epoch == generation) {
+        await restoreOriginal();
+      }
       publish();
     }
   }
@@ -413,6 +471,7 @@ class AcceleratorSession {
     AcceleratorDiagnostics.publish({
       'state': state,
       'mode': config.mode.name,
+      'directCdnRecovery': directCdnRecovery,
       'bufferSeconds': bufferSeconds,
       'requiredBps': requiredBps,
       'aggregateBps': aggregateBps,

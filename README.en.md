@@ -3,7 +3,7 @@
     <h1>PiliBoost</h1>
 </div>
 
-## PiliBoost · 0.1.5 transport scheduling update
+## PiliBoost · 0.1.6 slow-route recovery test build
 
 A [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) fork with adaptive CDN selection and bounded streaming acceleration.
 Development belongs to [jyh9521/PiliBoost](https://github.com/jyh9521/PiliBoost); upstream is a reference and synchronization source.
@@ -27,6 +27,8 @@ No disk cache, live acceleration, parallel audio or unvalidated cross-CDN byte s
 
 0.1.5 transport update: fully validated chunks return clients to a bounded exact-signed-URI reuse pool. The ordered queue refills after consumption without a batch barrier; paused consumers do not refill and identity failures abort sibling work promptly. `transportClientsCreated` / `transportClientsReused` count client objects, not real TCP/TLS connections or measured speed. Initial payload, HEAD isolation, conditional validators and fallback remain. Controlled HTTP results do not establish real-CDN benefit.
 
+0.1.6 adds bounded proxy recovery. Sustained low buffering compares one incumbent and one candidate at the current ordered byte position. Matching complete sample hashes and totals plus a measured gain are required before a whole-source reopen. Recovery selects direct candidate playback for this session, closes the chunk relay and reports directCdnRecovery. Bare tags are never used to splice different sources. Failed validation or a failure during cooldown restores original playback. Short samples do not establish long-play reliability; this is a regression test build.
+
 ### Verification
 
 Diagnostics separate received network payload, fresh ordered output, cache output, observed concurrency, buffering and CDN capabilities/fallback reasons.
@@ -36,7 +38,7 @@ Automated tests and controlled native fixtures are validated; real CDN gains and
 
 ### Release and build
 
-Version: **0.1.5+7**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
+Version: **0.1.6+8**. Android release identity: `com.jyh9521.piliboost`; app label: **PiliBoost**.
 A dedicated release key is required. Existing `com.example.piliplus.debug` test builds remain separate; data is not migrated automatically.
 Published builds belong in this fork's [Releases](https://github.com/jyh9521/PiliBoost/releases). Release preparation/build output is not stable device acceptance.
 [Build/signing](docs/accelerator/RELEASE.md) · [Budgets/export](docs/accelerator/V8SETTINGS.md) · [Validation](docs/accelerator/VALIDATION.md) · [Attribution](NOTICE).

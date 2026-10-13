@@ -84,7 +84,7 @@ class CdnProbe {
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
       request.headers.set(
         HttpHeaders.rangeHeader,
-        'bytes=0-${config.probeBytes - 1}',
+        'bytes=${config.probeOffset}-${config.probeOffset + config.probeBytes - 1}',
       );
       final response = await request.close();
       status = response.statusCode;
@@ -100,9 +100,13 @@ class CdnProbe {
       }
       final start = int.parse(match[1]!), end = int.parse(match[2]!);
       final total = int.parse(match[3]!);
-      final expected = total < config.probeBytes ? total : config.probeBytes;
-      if (start != 0 ||
-          end != expected - 1 ||
+      final remaining = total - config.probeOffset;
+      final expected = remaining < config.probeBytes
+          ? remaining
+          : config.probeBytes;
+      if (start != config.probeOffset ||
+          expected <= 0 ||
+          end != config.probeOffset + expected - 1 ||
           total <= end ||
           (response.contentLength != -1 &&
               response.contentLength != expected) ||

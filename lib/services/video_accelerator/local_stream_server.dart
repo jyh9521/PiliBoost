@@ -90,6 +90,8 @@ class LocalStreamServer {
   int _epoch = 0, upstreamBytes = 0, forwardedBytes = 0, errors = 0;
   int activeRequests = 0, requests = 0, cancellations = 0;
   String? lastFailureReason;
+  // Current video byte demand, advanced only by ordered output, never by prefetch.
+  int demandOffset = 0;
   bool _closed = false;
   Future<void>? _closing, _starting;
   Uri get uri => Uri.parse('http://127.0.0.1:${_server!.port}/$_token/video');
@@ -221,6 +223,7 @@ class LocalStreamServer {
       }
       cancelRequests();
       epoch = _epoch;
+      demandOffset = range?.start ?? 0;
       requests++;
       activeRequests = 1;
       client = clientFactory()..autoUncompress = false;
@@ -451,16 +454,19 @@ class LocalStreamServer {
               await r.response.addStream(
                 scheduler
                     .read(resource, first, last)
-                    .handleError((Object error) {
-                      if (error is! RangeCancelled) upstreamFailed = true;
-                      throw error;
-                    })
                     .map((chunk) {
                       if (_closed || epoch != _epoch) {
                         throw const RangeCancelled();
                       }
                       _recordForwarded(chunk.length, cached: chunkCached);
                       return chunk;
+                    })
+                    .handleError((Object error) {
+                      // Demux/seek closes the preceding request routinely. Do
+                      // not send a cancellation error into HttpResponse.addStream.
+                      if (error is RangeCancelled) return;
+                      upstreamFailed = true;
+                      throw error;
                     }),
               );
               if (scheduler.deliveredBytes != last - first + 1) {
@@ -576,6 +582,7 @@ class LocalStreamServer {
   }
 
   void _recordForwarded(int count, {bool cached = false}) {
+    demandOffset += count;
     forwardedBytes += count;
     metrics.forwarded(count, cached: cached);
   }

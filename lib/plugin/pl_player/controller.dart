@@ -1205,9 +1205,11 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
                 event.startsWith('Can not open external file http') ||
                 event.startsWith('tcp: ffurl_read returned '))) {
           if (_acceleratorSwitching) {
-            _acceleratorRecoveryPending = true;
+            // Closing the previous loopback stream during a whole-source reopen
+            // can report a read error. The awaited open owns recovery here.
+            if (accelerator.proxy == null) _acceleratorRecoveryPending = true;
           } else {
-            unawaited(accelerator.restoreOriginal());
+            unawaited(accelerator.recoverPlayback());
           }
           return;
         }
